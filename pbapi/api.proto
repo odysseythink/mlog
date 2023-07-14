@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package pbapi;
+
+// log_client --> mlog
+// mlog --> log_client
+message PK_LOG_HEARTBEAT
+{
+	enum CMD_LOG_HEARTBEAT
+	{
+		UNKNOWN = 0;
+		CMD = 0x0A0B0001;
+	}
+	string name = 1;
+	string pwd = 2;
+}
+
+// log_client --> mlog
+message PK_LOG_INFO_REQ
+{
+	enum CMD_LOG_INFO_REQ
+	{
+		UNKNOWN = 0;
+		CMD = 0x0A0B0001;
+	}
+	string name = 1;
+	string pwd = 2;
+}
+
+// mlog --> log_client
+message PK_LOG_INFO_RSP
+{
+	enum CMD_LOG_INFO_RSP
+	{
+		UNKNOWN = 0;
+		CMD = 0x0B0A0001;
+	}
+    string errmsg = 1;
+	string facility = 2;
+}
+
+// log_client --> mlog
+message PK_LOG_SUBSCRIBE_REQ
+{
+	enum CMD_LOG_SUBSCRIBE_REQ
+	{
+		UNKNOWN = 0;
+		CMD = 0x0A0B0002;
+	}
+	string name = 1;
+	string pwd = 2;
+	string facility = 3;
+	string logAddr = 4;
+}
+
+// mlog --> log_client
+message PK_LOG_SUBSCRIBE_RSP
+{
+	enum CMD_LOG_SUBSCRIBE_RSP
+	{
+		UNKNOWN = 0;
+		CMD = 0x0B0A0002;
+	}
+    string errmsg = 1;
+}
+
+// mlog --> log_client
+message PK_LOG_PUBLISH_NOTICE
+{
+	enum CMD_LOG_PUBLISH_NOTICE
+	{
+		UNKNOWN = 0;
+		CMD = 0x0B0A0003;
+	}
+	string host = 1;
+	string msg = 2;
+	string timestamp = 3;
+	int32 level = 4;
+	int32 pid = 5;
+	string file = 6;
+	string funcname = 7;
+	int32 line = 8;
+	string facility = 9;
+}
