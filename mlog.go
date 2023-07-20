@@ -574,6 +574,7 @@ func (l *loggingT) formatHeader(s severity, file, funcname string, line int, now
 	year, month, day := now.Date()
 	hour, minute, second := now.Clock()
 	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
+	headerlen := 0
 
 	// buf.WriteString(fmt.Sprintf("[%s][%c][%d][%s %s:%d]", now.Format("2006-01-02 15:04:05.000"), severityChar[s], pid, file, funcname, line))
 	buf.tmp[0] = '['
@@ -598,14 +599,41 @@ func (l *loggingT) formatHeader(s severity, file, funcname string, line int, now
 	buf.nDigits(7, 32, pid, ' ') // TODO: should be TID
 	buf.tmp[39] = ']'
 	buf.tmp[40] = '['
+	headerlen = 41
 	copy(buf.tmp[41:], []byte(file))
-	buf.tmp[41+len(file)] = ' '
-	copy(buf.tmp[41+len(file)+1:], []byte(funcname))
-	buf.tmp[41+len(file)+1+len(funcname)] = ':'
+	if 41+len(file) < len(buf.tmp) {
+		buf.tmp[41+len(file)] = ' '
 
-	tmplen := buf.someDigits(41+len(file)+1+len(funcname)+1, line)
-	buf.tmp[41+len(file)+1+len(funcname)+1+tmplen] = ']'
-	buf.Write(buf.tmp[:41+len(file)+1+len(funcname)+1+tmplen+1])
+		if 41+len(file)+1 < len(buf.tmp) {
+			copy(buf.tmp[41+len(file)+1:], []byte(funcname))
+			if 41+len(file)+1+len(funcname) < len(buf.tmp) {
+				buf.tmp[41+len(file)+1+len(funcname)] = ':'
+				if 41+len(file)+1+len(funcname)+1 < len(buf.tmp) {
+					tmplen := buf.someDigits(41+len(file)+1+len(funcname)+1, line)
+					if 41+len(file)+1+len(funcname)+1+tmplen < len(buf.tmp) {
+						buf.tmp[41+len(file)+1+len(funcname)+1+tmplen] = ']'
+					} else {
+						headerlen = len(buf.tmp)
+					}
+					if 41+len(file)+1+len(funcname)+1+tmplen < len(buf.tmp) {
+						headerlen = 41 + len(file) + 1 + len(funcname) + 1 + tmplen + 1
+					} else {
+						headerlen = len(buf.tmp)
+					}
+				} else {
+					headerlen = len(buf.tmp)
+				}
+			} else {
+				headerlen = len(buf.tmp)
+			}
+		} else {
+			headerlen = len(buf.tmp)
+		}
+	} else {
+		headerlen = len(buf.tmp)
+	}
+
+	buf.Write(buf.tmp[:headerlen])
 
 	// buf.twoDigits(1, int(month))
 	// buf.twoDigits(3, day)
