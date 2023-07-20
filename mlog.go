@@ -461,7 +461,7 @@ type loggingT struct {
 // buffer holds a byte Buffer for reuse. The zero value is ready for use.
 type buffer struct {
 	bytes.Buffer
-	tmp  [128]byte // temporary byte array for creating headers.
+	tmp  [256]byte // temporary byte array for creating headers.
 	next *buffer
 }
 
