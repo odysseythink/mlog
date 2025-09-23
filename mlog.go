@@ -1,19 +1,3 @@
-// Go support for leveled logs, analogous to https://code.google.com/p/google-glog/
-//
-// Copyright 2013 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 // Package glog implements logging analogous to the Google-internal C++ INFO/ERROR/V setup.
 // It provides functions Info, Warning, Error, Fatal, plus formatting variants such as
 // Infof. It also provides V-style logging controlled by the -v and -vmodule=file=2 flags.
@@ -555,6 +539,13 @@ func (l *loggingT) header(s severity, depth int, now time.Time) (*buffer, string
 			file = file[slash+1:]
 		}
 		funcname = runtime.FuncForPC(pc).Name()
+		tmplist := strings.Split(funcname, "/")
+		if strings.Contains(tmplist[len(tmplist)-1], ".") {
+			tmplist = strings.Split(tmplist[len(tmplist)-1], ".")
+			funcname = tmplist[len(tmplist)-1]
+		} else {
+			funcname = tmplist[len(tmplist)-1]
+		}
 	}
 	return l.formatHeader(s, file, funcname, line, now), file, funcname, line
 }
@@ -1035,7 +1026,15 @@ func (lb logBridge) Write(b []byte) (n int, err error) {
 		text = fmt.Sprintf("bad log format: %s", b)
 	} else {
 		file = string(parts[0])
-		funcname = string(parts[1])
+		tmplist := strings.Split(string(parts[1]), "/")
+		if strings.Contains(tmplist[len(tmplist)-1], ".") {
+			tmplist = strings.Split(tmplist[len(tmplist)-1], ".")
+			funcname = tmplist[len(tmplist)-1]
+		} else {
+			funcname = tmplist[len(tmplist)-1]
+		}
+		// funcname = string(parts[1])
+
 		text = string(parts[3][1:]) // skip leading space
 		line, err = strconv.Atoi(string(parts[2]))
 		if err != nil {
