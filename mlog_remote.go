@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"mlib.com/mcommu"
-	"mlib.com/mcommu/processor"
+	"mlib.com/mlog/internal/logsink"
 	"mlib.com/mlog/pbapi"
+	"mlib.com/mrun/ezconn"
+	"mlib.com/mrun/ezconn/processor"
 )
 
 var (
@@ -37,17 +38,16 @@ type remoteLogger struct {
 	Addr           string
 	Hostname       string
 	Facility       string // defaults to current process name
-	polling        chan *pbapi.PK_LOG_PUBLISH_NOTICE
 	subscribeAddr  sync.Map
-	communicator   mcommu.ICommunicator
-	processor      mcommu.IProcessor
+	communicator   ezconn.ICommunicator
+	processor      ezconn.IProcessor
 	ctx            context.Context
 	wg             sync.WaitGroup
 	ctxCancelFunc  context.CancelFunc
 	publishMsgPool sync.Pool
 }
 
-func (w *remoteLogger) PbLogInfoReqHandle(conn mcommu.IConn, req interface{}) {
+func (w *remoteLogger) PbLogInfoReqHandle(conn ezconn.IConn, req interface{}) {
 	rsp := &pbapi.PK_LOG_INFO_RSP{}
 	if infoReq, ok := req.(*pbapi.PK_LOG_INFO_REQ); !ok || infoReq == nil {
 		log.Printf("invalid req=%#v\n", req)
@@ -63,7 +63,7 @@ func (w *remoteLogger) PbLogInfoReqHandle(conn mcommu.IConn, req interface{}) {
 	conn.Write(rsp)
 }
 
-func (w *remoteLogger) PbLogSubscribeReqHandle(conn mcommu.IConn, req interface{}) {
+func (w *remoteLogger) PbLogSubscribeReqHandle(conn ezconn.IConn, req interface{}) {
 	rsp := &pbapi.PK_LOG_SUBSCRIBE_RSP{}
 	if subscribeReq, ok := req.(*pbapi.PK_LOG_SUBSCRIBE_REQ); !ok || subscribeReq == nil {
 		log.Printf("invalid req=%#v\n", req)
@@ -94,7 +94,6 @@ func (w *remoteLogger) Init() {
 	}
 	w.Facility = path.Base(os.Args[0])
 	w.ctx, w.ctxCancelFunc = context.WithCancel(context.Background())
-	w.polling = make(chan *pbapi.PK_LOG_PUBLISH_NOTICE)
 	w.wg.Add(1)
 
 	go func() {
@@ -111,53 +110,15 @@ func (w *remoteLogger) Init() {
 			case <-timer.C:
 				if w.communicator == nil {
 					port := defaultLogStartPort + rand.Intn(100)
-					w.communicator = mcommu.NewCommunicator("udp", "0.0.0.0:"+strconv.Itoa(port), 50, 1024, 50, w.processor)
+					w.communicator = ezconn.NewCommunicator("udp", "0.0.0.0:"+strconv.Itoa(port), 50, 1024, 50, w.processor)
 					if w.communicator == nil {
 						timer.Reset(30 * time.Second)
 					}
-				}
-			case msg := <-w.polling:
-				if w.communicator != nil {
-					w.subscribeAddr.Range(func(key, value interface{}) bool {
-						if err := w.communicator.SendToRemote(key.(string), msg); err != nil {
-							log.Printf("send to remote failed:%v\n", err)
-							w.subscribeAddr.Delete(key)
-						}
-						return true
-					})
 				}
 			}
 		}
 	}()
 	//
-}
-
-func (w *remoteLogger) Publish(l *loggingT, level int32, pid int, file, funcname string, line int, msgtime time.Time, format string, args ...interface{}) error {
-	if w.communicator == nil {
-		return fmt.Errorf("no communicator")
-	}
-	if w.polling == nil {
-		// no polling
-		return fmt.Errorf("no polling rounting")
-	}
-	remoteBuf := l.getBuffer()
-	if format != "" {
-		fmt.Fprintf(remoteBuf, format, args...)
-	} else {
-		fmt.Fprintln(remoteBuf, args...)
-	}
-	m := w.constructMessage(remoteBuf.Bytes(), w.Hostname, int32(level), pid, file, funcname, line, w.Facility, msgtime)
-
-	timeout := time.NewTimer(time.Microsecond * 10)
-
-	select {
-	case w.polling <- m:
-		return nil
-	case <-timeout.C:
-		return fmt.Errorf("write chan time out")
-	case <-w.ctx.Done():
-		return fmt.Errorf("polling is done")
-	}
 }
 
 func (w *remoteLogger) constructMessage(p []byte, hostname string, level int32, pid int, file, funcname string, line int, facility string, msgtime time.Time) (m *pbapi.PK_LOG_PUBLISH_NOTICE) {
@@ -199,3 +160,26 @@ func (w *remoteLogger) Destroy() {
 }
 
 var mRemoteWriter *remoteLogger = newRemoteLogger()
+
+func (s *remoteLogger) Enabled(m *logsink.Meta) bool {
+	return true
+}
+
+// Emit implements logsink.Text.Emit.
+func (s *remoteLogger) Emit(m *logsink.Meta, data []byte) (n int, err error) {
+	if s.communicator == nil {
+		return 0, fmt.Errorf("no communicator")
+	}
+	msg := s.constructMessage(data, s.Hostname, int32(m.Severity), pid, m.File, m.Funcname, m.Line, s.Facility, m.Time)
+	if s.communicator != nil {
+		s.subscribeAddr.Range(func(key, value interface{}) bool {
+			if err := s.communicator.SendToRemote(key.(string), msg); err != nil {
+				log.Printf("send to remote failed:%v\n", err)
+				s.subscribeAddr.Delete(key)
+			}
+			return true
+		})
+	}
+	n += len(data)
+	return n, err
+}

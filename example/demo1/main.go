@@ -12,6 +12,7 @@ func test1() {
 
 func main() {
 	mlog.SetLogDir("logs")
+	mlog.SetLogLevel(0)
 	for iLoop := 0; iLoop < 1000; iLoop++ {
 		if iLoop%4 == 0 {
 			mlog.Debugf("hello%d", iLoop)

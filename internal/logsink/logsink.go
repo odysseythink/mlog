@@ -217,11 +217,12 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 	// It's worth about 3X. Fprintf is hard.
 	const severityChar = "DIWEF"
 	buf.WriteByte('[')
-	buf.WriteByte(severityChar[m.Severity])
-
 	year, month, day := m.Time.Date()
 	hour, minute, second := m.Time.Clock()
+	nDigits(buf, 4, uint64(year), '0')
+	buf.WriteByte('-')
 	twoDigits(buf, int(month))
+	buf.WriteByte('-')
 	twoDigits(buf, day)
 	buf.WriteByte(' ')
 	twoDigits(buf, hour)
@@ -231,10 +232,14 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 	twoDigits(buf, second)
 	buf.WriteByte('.')
 	nDigits(buf, 6, uint64(m.Time.Nanosecond()/1000), '0')
-	buf.WriteByte(' ')
-
+	buf.WriteByte(']')
+	buf.WriteByte('[')
+	buf.WriteByte(severityChar[m.Severity])
+	buf.WriteByte(']')
+	buf.WriteByte('[')
 	nDigits(buf, 7, uint64(m.Thread), ' ')
-	buf.WriteByte(' ')
+	buf.WriteByte(']')
+	buf.WriteByte('[')
 
 	{
 		file := m.File
@@ -243,7 +248,14 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 		}
 		buf.WriteString(file)
 	}
-
+	buf.WriteByte(' ')
+	{
+		funcname := m.Funcname
+		if i := strings.LastIndex(funcname, "/"); i >= 0 {
+			funcname = funcname[i+1:]
+		}
+		buf.WriteString(funcname)
+	}
 	buf.WriteByte(':')
 	{
 		var tmp [19]byte

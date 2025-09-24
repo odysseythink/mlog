@@ -32,6 +32,10 @@ func SetLogDir(path string) {
 	*logDir = path
 }
 
+func SetLogLevel(level int) {
+	*logBufLevel = level
+}
+
 // 设置最大日志文件的大小,单位为M
 func SetMaxLogSize(sz int) {
 	MaxSize = uint64(sz * 1024 * 1024)
@@ -109,26 +113,15 @@ func logName(tag string, t time.Time) (name, link string) {
 	if strings.HasSuffix(program, ".exe") {
 		shortprogram = strings.TrimSuffix(program, ".exe")
 	}
-	if tag == "" {
-		name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.log",
-			shortprogram,
-			t.Year(),
-			t.Month(),
-			t.Day(),
-			t.Hour(),
-			t.Minute(),
-			t.Second())
-	} else {
-		name = fmt.Sprintf("%s-%s-%04d%02d%02d-%02d%02d%02d.log",
-			shortprogram,
-			tag,
-			t.Year(),
-			t.Month(),
-			t.Day(),
-			t.Hour(),
-			t.Minute(),
-			t.Second())
-	}
+
+	name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.log",
+		shortprogram,
+		t.Year(),
+		t.Month(),
+		t.Day(),
+		t.Hour(),
+		t.Minute(),
+		t.Second())
 
 	return name, program + "." + tag
 }
@@ -206,6 +199,7 @@ func init() {
 		logsink.TextSinks = append(logsink.TextSinks, &sinks.stderr)
 	}
 	logsink.TextSinks = append(logsink.TextSinks, &sinks.file)
+	logsink.TextSinks = append(logsink.TextSinks, mRemoteWriter)
 
 	sinks.file.flushChan = make(chan logsink.Severity, 1)
 	go sinks.file.flushDaemon()
@@ -239,15 +233,11 @@ func (s *stderrSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 	return n, err
 }
 
-// severityWriters is an array of flushSyncWriter with a value for each
-// logsink.Severity.
-type severityWriters [4]flushSyncWriter
-
 // fileSink is a logsink.Text that prints to a set of Google log files.
 type fileSink struct {
 	mu sync.Mutex
 	// file holds writer for each of the log types.
-	file      severityWriters
+	file      flushSyncWriter
 	flushChan chan logsink.Severity
 }
 
@@ -265,13 +255,12 @@ func (s *fileSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 	if err = s.createMissingFiles(m.Severity); err != nil {
 		return 0, err
 	}
-	for sev := m.Severity; sev >= logsink.Info; sev-- {
-		if _, fErr := s.file[sev].Write(data); fErr != nil && err == nil {
+
+	n = len(data)
+	if int(m.Severity) >= *logBufLevel {
+		if _, fErr := s.file.Write(data); fErr != nil && err == nil {
 			err = fErr // Take the first error.
 		}
-	}
-	n = len(data)
-	if int(m.Severity) > *logBufLevel {
 		select {
 		case s.flushChan <- m.Severity:
 		default:
@@ -285,25 +274,22 @@ func (s *fileSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 // upTo that have not already been created.
 // s.mu is held.
 func (s *fileSink) createMissingFiles(upTo logsink.Severity) error {
-	if s.file[upTo] != nil {
+	if s.file != nil {
 		return nil
 	}
 	now := time.Now()
 	// Files are created in increasing severity order, so we can be assured that
 	// if a high severity logfile exists, then so do all of lower severity.
-	for sev := logsink.Info; sev <= upTo; sev++ {
-		if s.file[sev] != nil {
-			continue
-		}
-		sb := &syncBuffer{
-			sink: s,
-			sev:  sev,
-		}
-		if err := sb.rotateFile(now); err != nil {
-			return err
-		}
-		s.file[sev] = sb
+
+	sb := &syncBuffer{
+		sink: s,
+		sev:  logsink.Debug,
 	}
+	if err := sb.rotateFile(now); err != nil {
+		return err
+	}
+	s.file = sb
+
 	return nil
 }
 
@@ -328,7 +314,7 @@ func Flush() {
 
 // Flush flushes all the logs and attempts to "sync" their data to disk.
 func (s *fileSink) Flush() error {
-	return s.flush(logsink.Info)
+	return s.flush(logsink.Severity(*logBufLevel))
 }
 
 // flush flushes all logs of severity threshold or greater.
@@ -347,11 +333,9 @@ func (s *fileSink) flush(threshold logsink.Severity) error {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		// Flush from fatal down, in case there's trouble flushing.
-		for sev := logsink.Fatal; sev >= threshold; sev-- {
-			if file := s.file[sev]; file != nil {
-				updateErr(file.Flush())
-				files = append(files, file)
-			}
+		if file := s.file; file != nil {
+			updateErr(file.Flush())
+			files = append(files, file)
 		}
 	}()
 
@@ -368,14 +352,14 @@ func (s *fileSink) flush(threshold logsink.Severity) error {
 // written). This may return multiple names if the log type requested
 // has rolled over.
 func Names(s string) ([]string, error) {
-	severity, err := logsink.ParseSeverity(s)
+	_, err := logsink.ParseSeverity(s)
 	if err != nil {
 		return nil, err
 	}
 
 	sinks.file.mu.Lock()
 	defer sinks.file.mu.Unlock()
-	f := sinks.file.file[severity]
+	f := sinks.file.file
 	if f == nil {
 		return nil, ErrNoLog
 	}
