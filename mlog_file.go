@@ -32,8 +32,8 @@ func SetLogDir(path string) {
 	*logDir = path
 }
 
-func SetLogLevel(level int) {
-	*logBufLevel = level
+func SetLogLevel[T int | int16 | int32 | int64 | uint | uint16 | uint32 | uint64](level T) {
+	*logBufLevel = int(level)
 }
 
 // 设置最大日志文件的大小,单位为M
