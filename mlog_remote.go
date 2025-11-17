@@ -3,7 +3,6 @@ package mlog
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log"
 	"math/rand"
 	"os"
@@ -168,7 +167,8 @@ func (s *remoteLogger) Enabled(m *logsink.Meta) bool {
 // Emit implements logsink.Text.Emit.
 func (s *remoteLogger) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 	if s.communicator == nil {
-		return 0, fmt.Errorf("no communicator")
+		log.Println("no communicator")
+		return 0, nil
 	}
 	msg := s.constructMessage(data, s.Hostname, int32(m.Severity), pid, m.File, m.Funcname, m.Line, s.Facility, m.Time)
 	if s.communicator != nil {
