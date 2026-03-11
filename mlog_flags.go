@@ -12,7 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"mlib.com/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // modulePat contains a filter for the -vmodule flag.

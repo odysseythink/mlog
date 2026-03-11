@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	"mlib.com/mlog/internal/stackdump"
+	"github.com/odysseythink/mlog/internal/stackdump"
 )
 
 var file string

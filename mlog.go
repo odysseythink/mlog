@@ -98,8 +98,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
-	"mlib.com/mlog/internal/stackdump"
+	"github.com/odysseythink/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/stackdump"
 )
 
 var timeNow = time.Now // Stubbed out for testing.

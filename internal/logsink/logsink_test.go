@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
-	"mlib.com/mlog/internal/stackdump"
-	"mlib.com/mrun/cmp"
+	"github.com/odysseythink/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/stackdump"
+	"github.com/odysseythink/mrun/cmp"
 )
 
 // A savingTextSink saves the data argument of the last Emit call made to it.

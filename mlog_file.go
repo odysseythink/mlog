@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // logDirs lists the candidate directories for new log files.

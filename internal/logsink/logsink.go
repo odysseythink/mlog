@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"mlib.com/mlog/internal/stackdump"
+	"github.com/odysseythink/mlog/internal/stackdump"
 )
 
 // MaxLogMessageLen is the limit on length of a formatted log message, including

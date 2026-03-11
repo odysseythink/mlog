@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // Test that shortHostname works as advertised.

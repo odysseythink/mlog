@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
-	"mlib.com/mlog/pbapi"
-	"mlib.com/mrun/ezconn"
-	"mlib.com/mrun/ezconn/processor"
+	"github.com/odysseythink/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/pbapi"
+	"github.com/odysseythink/mrun/ezconn"
+	"github.com/odysseythink/mrun/ezconn/processor"
 )
 
 var (

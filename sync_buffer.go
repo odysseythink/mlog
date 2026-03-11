@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"time"
 
-	"mlib.com/mlog/internal/logsink"
+	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // syncBuffer joins a bufio.Writer to its underlying file, providing access to the
