@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // logDirs lists the candidate directories for new log files.
@@ -24,7 +22,7 @@ var (
 	// See createLogDirs for the full list of possible destinations.
 	logDir      = flag.String("log_dir", "", "If non-empty, write log files in this directory")
 	logLink     = flag.String("log_link", "", "If non-empty, add symbolic links in this directory to the log files")
-	logBufLevel = flag.Int("logbuflevel", int(logsink.Info), "Buffer log messages logged at this level or lower"+
+	logBufLevel = flag.Int("logbuflevel", int(Severity_Info), "Buffer log messages logged at this level or lower"+
 		" (-1 means don't buffer; 0 means buffer INFO only; ...). Has limited applicability on non-prod platforms.")
 )
 
@@ -196,32 +194,31 @@ func init() {
 	// Register stderr first: that way if we crash during file-writing at least
 	// the log will have gone somewhere.
 	if shouldRegisterStderrSink() {
-		logsink.TextSinks = append(logsink.TextSinks, &sinks.stderr)
+		TextSinks = append(TextSinks, &sinks.stderr)
 	}
-	logsink.TextSinks = append(logsink.TextSinks, &sinks.file)
-	logsink.TextSinks = append(logsink.TextSinks, mRemoteWriter)
+	TextSinks = append(TextSinks, &sinks.file)
 
-	sinks.file.flushChan = make(chan logsink.Severity, 1)
+	sinks.file.flushChan = make(chan Severity, 1)
 	go sinks.file.flushDaemon()
 }
 
-// stderrSink is a logsink.Text that writes log entries to stderr
+// stderrSink is a TextSink that writes log entries to stderr
 // if they meet certain conditions.
 type stderrSink struct {
 	mu sync.Mutex
 	w  io.Writer // if nil Emit uses os.Stderr directly
 }
 
-// Enabled implements logsink.Text.Enabled.  It returns true if any of the
+// Enabled implements TextSink.Enabled.  It returns true if any of the
 // various stderr flags are enabled for logs of the given severity, if the log
 // message is from the standard "log" package, or if google.Init has not yet run
 // (and hence file logging is not yet initialized).
-func (s *stderrSink) Enabled(m *logsink.Meta) bool {
+func (s *stderrSink) Enabled(m *LogsinkMeta) bool {
 	return toStderr || alsoToStderr || m.Severity >= stderrThreshold.get()
 }
 
-// Emit implements logsink.Text.Emit.
-func (s *stderrSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
+// Emit implements TextSink.Emit.
+func (s *stderrSink) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	w := s.w
@@ -233,22 +230,22 @@ func (s *stderrSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 	return n, err
 }
 
-// fileSink is a logsink.Text that prints to a set of Google log files.
+// fileSink is a TextSink that prints to a set of Google log files.
 type fileSink struct {
 	mu sync.Mutex
 	// file holds writer for each of the log types.
 	file      flushSyncWriter
-	flushChan chan logsink.Severity
+	flushChan chan Severity
 }
 
-// Enabled implements logsink.Text.Enabled.  It returns true if google.Init
+// Enabled implements TextSink.Enabled.  It returns true if google.Init
 // has run and both --disable_log_to_disk and --logtostderr are false.
-func (s *fileSink) Enabled(m *logsink.Meta) bool {
+func (s *fileSink) Enabled(m *LogsinkMeta) bool {
 	return !toStderr
 }
 
-// Emit implements logsink.Text.Emit
-func (s *fileSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
+// Emit implements Severity.Emit
+func (s *fileSink) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -273,7 +270,7 @@ func (s *fileSink) Emit(m *logsink.Meta, data []byte) (n int, err error) {
 // createMissingFiles creates all the log files for severity from infoLog up to
 // upTo that have not already been created.
 // s.mu is held.
-func (s *fileSink) createMissingFiles(upTo logsink.Severity) error {
+func (s *fileSink) createMissingFiles(upTo Severity) error {
 	if s.file != nil {
 		return nil
 	}
@@ -283,7 +280,7 @@ func (s *fileSink) createMissingFiles(upTo logsink.Severity) error {
 
 	sb := &syncBuffer{
 		sink: s,
-		sev:  logsink.Debug,
+		sev:  Severity_Debug,
 	}
 	if err := sb.rotateFile(now); err != nil {
 		return err
@@ -314,11 +311,11 @@ func Flush() {
 
 // Flush flushes all the logs and attempts to "sync" their data to disk.
 func (s *fileSink) Flush() error {
-	return s.flush(logsink.Severity(*logBufLevel))
+	return s.flush(Severity(*logBufLevel))
 }
 
 // flush flushes all logs of severity threshold or greater.
-func (s *fileSink) flush(threshold logsink.Severity) error {
+func (s *fileSink) flush(threshold Severity) error {
 	var firstErr error
 	updateErr := func(err error) {
 		if err != nil && firstErr == nil {
@@ -352,7 +349,7 @@ func (s *fileSink) flush(threshold logsink.Severity) error {
 // written). This may return multiple names if the log type requested
 // has rolled over.
 func Names(s string) ([]string, error) {
-	_, err := logsink.ParseSeverity(s)
+	_, err := ParseSeverity(s)
 	if err != nil {
 		return nil, err
 	}

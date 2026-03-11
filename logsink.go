@@ -1,18 +1,4 @@
-// Copyright 2023 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-package logsink
+package mlog
 
 import (
 	"bytes"
@@ -22,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/odysseythink/mlog/internal/stackdump"
 )
 
 // MaxLogMessageLen is the limit on length of a formatted log message, including
@@ -39,30 +23,30 @@ type Severity int8
 // A message written to a high-severity log file is also written to each
 // lower-severity log file.
 const (
-	Debug Severity = iota
-	Info
-	Warning
-	Error
+	Severity_Debug Severity = iota
+	Severity_Info
+	Severity_Warning
+	Severity_Error
 
 	// Fatal contains logs written immediately before the process terminates.
 	//
 	// Sink implementations should not terminate the process themselves: the log
 	// package will perform any necessary cleanup and terminate the process as
 	// appropriate.
-	Fatal
+	Severity_Fatal
 )
 
 func (s Severity) String() string {
 	switch s {
-	case Debug:
+	case Severity_Debug:
 		return "DEBUG"
-	case Info:
+	case Severity_Info:
 		return "INFO"
-	case Warning:
+	case Severity_Warning:
 		return "WARNING"
-	case Error:
+	case Severity_Error:
 		return "ERROR"
-	case Fatal:
+	case Severity_Fatal:
 		return "FATAL"
 	}
 	return fmt.Sprintf("%T(%d)", s, s)
@@ -71,7 +55,7 @@ func (s Severity) String() string {
 // ParseSeverity returns the case-insensitive Severity value for the given string.
 func ParseSeverity(name string) (Severity, error) {
 	name = strings.ToUpper(name)
-	for s := Info; s <= Fatal; s++ {
+	for s := Severity_Info; s <= Severity_Fatal; s++ {
 		if s.String() == name {
 			return s, nil
 		}
@@ -79,10 +63,10 @@ func ParseSeverity(name string) (Severity, error) {
 	return -1, fmt.Errorf("logsink: invalid severity %q", name)
 }
 
-// Meta is metadata about a logging call.
-type Meta struct {
+// LogsinkMeta is metadata about a logging call.
+type LogsinkMeta struct {
 	// The context with which the log call was made (or nil). If set, the context
-	// is only valid during the logsink.Structured.Printf call, it should not be
+	// is only valid during the StructuredLogsink.Printf call, it should not be
 	// retained.
 	Context context.Context
 
@@ -115,11 +99,11 @@ type Meta struct {
 	//
 	// Even if WantStack returns false, this field may be set (e.g. if another
 	// sink wants a stack trace).
-	Stack *stackdump.Stack
+	Stack *Stack
 }
 
-// Structured is a logging destination that accepts structured data as input.
-type Structured interface {
+// StructuredLogsink is a logging destination that accepts structured data as input.
+type StructuredLogsink interface {
 	// Printf formats according to a fmt.Printf format specifier and writes a log
 	// entry.  The precise result of formatting depends on the sink, but should
 	// aim for consistency with fmt.Printf.
@@ -130,12 +114,12 @@ type Structured interface {
 	// Printf returns any error encountered *if* it is severe enough that the log
 	// package should terminate the process.
 	//
-	// The sink must not modify the *Meta parameter, nor reference it after
+	// The sink must not modify the *LogsinkMeta parameter, nor reference it after
 	// Printf has returned: it may be reused in subsequent calls.
-	Printf(meta *Meta, format string, a ...any) (n int, err error)
+	Printf(meta *LogsinkMeta, format string, a ...any) (n int, err error)
 }
 
-// StackWanter can be implemented by a logsink.Structured to indicate that it
+// StackWanter can be implemented by a StructuredLogsink to indicate that it
 // wants a stack trace to accompany at least some of the log messages it receives.
 type StackWanter interface {
 	// WantStack returns true if the sink requires a stack trace for a log message
@@ -143,16 +127,16 @@ type StackWanter interface {
 	//
 	// NOTE: Returning true implies that meta.Stack will be non-nil. Returning
 	// false does NOT imply that meta.Stack will be nil.
-	WantStack(meta *Meta) bool
+	WantStack(meta *LogsinkMeta) bool
 }
 
-// Text is a logging destination that accepts pre-formatted log lines (instead of
+// TextSink is a logging destination that accepts pre-formatted log lines (instead of
 // structured data).
-type Text interface {
+type TextSink interface {
 	// Enabled returns whether this sink should output messages for the given
-	// Meta.  If the sink returns false for a given Meta, the Printf function will
+	// LogsinkMeta.  If the sink returns false for a given LogsinkMeta, the Printf function will
 	// not call Emit on it for the corresponding log message.
-	Enabled(*Meta) bool
+	Enabled(*LogsinkMeta) bool
 
 	// Emit writes a pre-formatted text log entry (including any applicable
 	// header) to the log.  It returns the number of bytes occupied by the entry
@@ -161,7 +145,7 @@ type Text interface {
 	// Emit returns any error encountered *if* it is severe enough that the log
 	// package should terminate the process.
 	//
-	// The sink must not modify the *Meta parameter, nor reference it after
+	// The sink must not modify the *LogsinkMeta parameter, nor reference it after
 	// Printf has returned: it may be reused in subsequent calls.
 	//
 	// NOTE: When developing a text sink, keep in mind the surface in which the
@@ -170,22 +154,22 @@ type Text interface {
 	// (like `stderrSink`) do not protect against this (e.g. by escaping
 	// characters) because the cases where they would show user-influenced bytes
 	// are vanishingly small.
-	Emit(*Meta, []byte) (n int, err error)
+	Emit(*LogsinkMeta, []byte) (n int, err error)
 }
 
 // bufs is a pool of *bytes.Buffer used in formatting log entries.
 var bufs sync.Pool // Pool of *bytes.Buffer.
 
-// textPrintf formats a text log entry and emits it to all specified Text sinks.
+// textPrintf formats a text log entry and emits it to all specified TextSink sinks.
 //
 // The returned n is the maximum across all Emit calls.
 // The returned err is the first non-nil error encountered.
 // Sinks that are disabled by configuration should return (0, nil).
-func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, err error) {
+func textPrintf(m *LogsinkMeta, textSinks []TextSink, format string, args ...any) (n int, err error) {
 	// We expect at most file, stderr, and perhaps syslog.  If there are more,
 	// we'll end up allocating - no big deal.
 	const maxExpectedTextSinks = 3
-	var noAllocSinks [maxExpectedTextSinks]Text
+	var noAllocSinks [maxExpectedTextSinks]TextSink
 
 	sinks := noAllocSinks[:0]
 	for _, s := range textSinks {
@@ -193,7 +177,7 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 			sinks = append(sinks, s)
 		}
 	}
-	if len(sinks) == 0 && m.Severity != Fatal {
+	if len(sinks) == 0 && m.Severity != Severity_Fatal {
 		return 0, nil // No TextSinks specified; don't bother formatting.
 	}
 
@@ -283,7 +267,7 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 		}
 	}
 
-	if m.Severity == Fatal {
+	if m.Severity == Severity_Fatal {
 		savedM := *m
 		fatalMessageStore(savedEntry{
 			meta: &savedM,
@@ -294,8 +278,6 @@ func textPrintf(m *Meta, textSinks []Text, format string, args ...any) (n int, e
 	}
 	return n, err
 }
-
-const digits = "0123456789"
 
 // twoDigits formats a zero-prefixed two-digit integer to buf.
 func twoDigits(buf *bytes.Buffer, d int) {
@@ -321,13 +303,13 @@ func nDigits(buf *bytes.Buffer, n int, d uint64, pad byte) {
 	buf.Write(tmp[j:])
 }
 
-// Printf writes a log entry to all registered TextSinks in this package, then
+// LogsinkPrintf writes a log entry to all registered TextSinks in this package, then
 // to all registered StructuredSinks.
 //
-// The returned n is the maximum across all Emit and Printf calls.
+// The returned n is the maximum across all Emit and LogsinkPrintf calls.
 // The returned err is the first non-nil error encountered.
 // Sinks that are disabled by configuration should return (0, nil).
-func Printf(m *Meta, format string, args ...any) (n int, err error) {
+func LogsinkPrintf(m *LogsinkMeta, format string, args ...any) (n int, err error) {
 	m.Depth++
 	n, err = textPrintf(m, TextSinks, format, args...)
 
@@ -337,13 +319,13 @@ func Printf(m *Meta, format string, args ...any) (n int, err error) {
 			if m.Stack == nil {
 				// First, try to find a stacktrace in args, otherwise generate one.
 				for _, arg := range args {
-					if stack, ok := arg.(stackdump.Stack); ok {
+					if stack, ok := arg.(Stack); ok {
 						m.Stack = &stack
 						break
 					}
 				}
 				if m.Stack == nil {
-					stack := stackdump.Caller( /* skipDepth = */ m.Depth)
+					stack := StackdumpCaller( /* skipDepth = */ m.Depth)
 					m.Stack = &stack
 				}
 			}
@@ -363,31 +345,31 @@ func Printf(m *Meta, format string, args ...any) (n int, err error) {
 //
 // These must only be modified during package init, and are read-only thereafter.
 var (
-	// StructuredSinks is the set of Structured sink instances to which logs
+	// StructuredSinks is the set of StructuredLogsink sink instances to which logs
 	// should be written.
-	StructuredSinks []Structured
+	StructuredSinks []StructuredLogsink
 
-	// TextSinks is the set of Text sink instances to which logs should be
+	// TextSinks is the set of TextSink sink instances to which logs should be
 	// written.
 	//
-	// These are registered separately from Structured sink implementations to
-	// avoid the need to repeat the work of formatting a message for each Text
+	// These are registered separately from StructuredLogsink sink implementations to
+	// avoid the need to repeat the work of formatting a message for each TextSink
 	// sink that writes it.  The package-level Printf function writes to both sets
-	// independenty, so a given log destination should only register a Structured
-	// *or* a Text sink (not both).
-	TextSinks []Text
+	// independenty, so a given log destination should only register a StructuredLogsink
+	// *or* a TextSink sink (not both).
+	TextSinks []TextSink
 )
 
 type savedEntry struct {
-	meta *Meta
+	meta *LogsinkMeta
 	msg  []byte
 }
 
-// StructuredTextWrapper is a Structured sink which forwards logs to a set of Text sinks.
+// StructuredTextWrapper is a StructuredLogsink sink which forwards logs to a set of TextSink sinks.
 //
 // The purpose of this sink is to allow applications to intercept logging calls before they are
-// serialized and sent to Text sinks. For example, if one needs to redact PII from logging
-// arguments before they reach STDERR, one solution would be to do the redacting in a Structured
+// serialized and sent to TextSink sinks. For example, if one needs to redact PII from logging
+// arguments before they reach STDERR, one solution would be to do the redacting in a StructuredLogsink
 // sink that forwards logs to a StructuredTextWrapper instance, and make STDERR a child of that
 // StructuredTextWrapper instance. This is how one could set this up in their application:
 //
@@ -401,12 +383,12 @@ type savedEntry struct {
 //
 // }
 type StructuredTextWrapper struct {
-	// TextSinks is the set of Text sinks that should receive logs from this
+	// TextSinks is the set of TextSink sinks that should receive logs from this
 	// StructuredTextWrapper instance.
-	TextSinks []Text
+	TextSinks []TextSink
 }
 
-// Printf forwards logs to all Text sinks registered in the StructuredTextWrapper.
-func (w *StructuredTextWrapper) Printf(meta *Meta, format string, args ...any) (n int, err error) {
+// Printf forwards logs to all TextSink sinks registered in the StructuredTextWrapper.
+func (w *StructuredTextWrapper) Printf(meta *LogsinkMeta, format string, args ...any) (n int, err error) {
 	return textPrintf(meta, w.TextSinks, format, args...)
 }

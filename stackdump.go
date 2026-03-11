@@ -1,23 +1,4 @@
-// Copyright 2023 Google Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// Package stackdump provides wrappers for runtime.Stack and runtime.Callers
-// with uniform support for skipping caller frames.
-//
-// ⚠ Unlike the functions in the runtime package, these may allocate a
-// non-trivial quantity of memory: use them with care. ⚠
-package stackdump
+package mlog
 
 import (
 	"bytes"
@@ -53,10 +34,10 @@ type Stack struct {
 
 func (s Stack) String() string { return string(s.Text) }
 
-// Caller returns the Stack dump for the calling goroutine, starting skipDepth
-// frames before the caller of Caller.  (Caller(0) provides a dump starting at
+// StackdumpCaller returns the Stack dump for the calling goroutine, starting skipDepth
+// frames before the caller of StackdumpCaller.  (StackdumpCaller(0) provides a dump starting at
 // the caller of this function.)
-func Caller(skipDepth int) Stack {
+func StackdumpCaller(skipDepth int) Stack {
 	return Stack{
 		Text: CallerText(skipDepth + 1),
 		PC:   CallerPC(skipDepth + 1),

@@ -97,9 +97,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/odysseythink/mlog/internal/logsink"
-	"github.com/odysseythink/mlog/internal/stackdump"
 )
 
 var timeNow = time.Now // Stubbed out for testing.
@@ -134,32 +131,32 @@ var Stats struct {
 }
 
 var severityStats = [...]*OutputStats{
-	logsink.Debug:   &Stats.Debug,
-	logsink.Info:    &Stats.Info,
-	logsink.Warning: &Stats.Warning,
-	logsink.Error:   &Stats.Error,
-	logsink.Fatal:   nil,
+	Severity_Debug:   &Stats.Debug,
+	Severity_Info:    &Stats.Info,
+	Severity_Warning: &Stats.Warning,
+	Severity_Error:   &Stats.Error,
+	Severity_Fatal:   nil,
 }
 
 // Level specifies a level of verbosity for V logs.  The -v flag is of type
 // Level and should be modified only through the flag.Value interface.
 type Level int32
 
-var metaPool sync.Pool // Pool of *logsink.Meta.
+var metaPool sync.Pool // Pool of *LogsinkMeta.
 
-// metaPoolGet returns a *logsink.Meta from metaPool as both an interface and a
+// metaPoolGet returns a *LogsinkMeta from metaPool as both an interface and a
 // pointer, allocating a new one if necessary.  (Returning the interface value
 // directly avoids an allocation if there was an existing pointer in the pool.)
-func metaPoolGet() (any, *logsink.Meta) {
+func metaPoolGet() (any, *LogsinkMeta) {
 	if metai := metaPool.Get(); metai != nil {
-		return metai, metai.(*logsink.Meta)
+		return metai, metai.(*LogsinkMeta)
 	}
-	meta := new(logsink.Meta)
+	meta := new(LogsinkMeta)
 	return meta, meta
 }
 
 func appendBacktrace(depth int, format string, args []any) (string, []any) {
-	// Capture a backtrace as a stackdump.Stack (both text and PC slice).
+	// Capture a backtrace as a Stack (both text and PC slice).
 	// Structured log sinks can extract the backtrace in whichever format they
 	// prefer (PCs or text), and Text sinks will include it as just another part
 	// of the log message.
@@ -167,7 +164,7 @@ func appendBacktrace(depth int, format string, args []any) (string, []any) {
 	// Use depth instead of depth+1 so that the backtrace always includes the
 	// log function itself - otherwise the reason for the trace appearing in the
 	// log may not be obvious to the reader.
-	dump := stackdump.Caller(depth)
+	dump := StackdumpCaller(depth)
 
 	// Add an arg and an entry in the format string for the stack dump.
 	//
@@ -181,13 +178,13 @@ func appendBacktrace(depth int, format string, args []any) (string, []any) {
 }
 
 // logf acts as ctxlogf, but doesn't expect a context.
-func logf(depth int, severity logsink.Severity, verbose bool, stack stack, format string, args ...any) {
+func logf(depth int, severity Severity, verbose bool, stack stack, format string, args ...any) {
 	ctxlogf(nil, depth+1, severity, verbose, stack, format, args...)
 }
 
 // ctxlogf writes a log message for a log function call (or log function wrapper)
 // at the given depth in the current goroutine's stack.
-func ctxlogf(ctx context.Context, depth int, severity logsink.Severity, verbose bool, stack stack, format string, args ...any) {
+func ctxlogf(ctx context.Context, depth int, severity Severity, verbose bool, stack stack, format string, args ...any) {
 	funcname := ""
 	now := timeNow()
 	pc, file, line, ok := runtime.Caller(depth + 1)
@@ -214,7 +211,7 @@ func ctxlogf(ctx context.Context, depth int, severity logsink.Severity, verbose 
 		format, args = appendBacktrace(depth+1, format, args)
 	}
 	metai, meta := metaPoolGet()
-	*meta = logsink.Meta{
+	*meta = LogsinkMeta{
 		Funcname: funcname,
 		Context:  ctx,
 		Time:     now,
@@ -234,9 +231,9 @@ func ctxlogf(ctx context.Context, depth int, severity logsink.Severity, verbose 
 
 var sinkErrOnce sync.Once
 
-func sinkf(meta *logsink.Meta, format string, args ...any) {
+func sinkf(meta *LogsinkMeta, format string, args ...any) {
 	meta.Depth++
-	n, err := logsink.Printf(meta, format, args...)
+	n, err := LogsinkPrintf(meta, format, args...)
 	if stats := severityStats[meta.Severity]; stats != nil {
 		atomic.AddInt64(&stats.lines, 1)
 		atomic.AddInt64(&stats.bytes, int64(n))
@@ -248,13 +245,13 @@ func sinkf(meta *logsink.Meta, format string, args ...any) {
 		// the first goroutine that comes here and terminate
 		// the process.
 		sinkErrOnce.Do(func() {
-			m := &logsink.Meta{}
+			m := &LogsinkMeta{}
 			m.Time = timeNow()
-			m.Severity = logsink.Fatal
+			m.Severity = Severity_Fatal
 			m.Thread = int64(pid)
 			_, m.File, m.Line, _ = runtime.Caller(0)
 			format, args := appendBacktrace(1, "log: exiting because of error writing previous log to sinks: %v", []any{err})
-			logsink.Printf(m, format, args...)
+			LogsinkPrintf(m, format, args...)
 			flushAndAbort()
 		})
 	}
@@ -268,7 +265,7 @@ func sinkf(meta *logsink.Meta, format string, args ...any) {
 // Valid names are "INFO", "WARNING", "ERROR", and "FATAL".  If the name is not
 // recognized, CopyStandardLogTo panics.
 func CopyStandardLogTo(name string) {
-	sev, err := logsink.ParseSeverity(name)
+	sev, err := ParseSeverity(name)
 	if err != nil {
 		panic(fmt.Sprintf("log.CopyStandardLogTo(%q): %v", name, err))
 	}
@@ -284,7 +281,7 @@ func CopyStandardLogTo(name string) {
 // Valid names are "INFO", "WARNING", "ERROR", and "FATAL". If the name is not
 // recognized, NewStandardLogger panics.
 func NewStandardLogger(name string) *stdLog.Logger {
-	sev, err := logsink.ParseSeverity(name)
+	sev, err := ParseSeverity(name)
 	if err != nil {
 		panic(fmt.Sprintf("log.NewStandardLogger(%q): %v", name, err))
 	}
@@ -293,7 +290,7 @@ func NewStandardLogger(name string) *stdLog.Logger {
 
 // logBridge provides the Write method that enables CopyStandardLogTo to connect
 // Go's standard logs to the logs provided by this package.
-type logBridge logsink.Severity
+type logBridge Severity
 
 // Write parses the standard logging line and passes its components to the
 // logger for severity(lb).
@@ -322,12 +319,12 @@ func (lb logBridge) Write(b []byte) (n int, err error) {
 	const stdLogDepth = 4
 
 	metai, meta := metaPoolGet()
-	*meta = logsink.Meta{
+	*meta = LogsinkMeta{
 		Time:     timeNow(),
 		File:     file,
 		Line:     line,
 		Depth:    stdLogDepth,
-		Severity: logsink.Severity(lb),
+		Severity: Severity(lb),
 		Thread:   int64(pid),
 	}
 
@@ -425,7 +422,7 @@ func (v Verbose) Info(args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) InfoDepth(depth int, args ...any) {
 	if v {
-		logf(depth+1, logsink.Info, true, noStack, defaultFormat(args), args...)
+		logf(depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -433,7 +430,7 @@ func (v Verbose) InfoDepth(depth int, args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) InfoDepthf(depth int, format string, args ...any) {
 	if v {
-		logf(depth+1, logsink.Info, true, noStack, format, args...)
+		logf(depth+1, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -441,7 +438,7 @@ func (v Verbose) InfoDepthf(depth int, format string, args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) Infoln(args ...any) {
 	if v {
-		logf(1, logsink.Info, true, noStack, lnFormat(args), args...)
+		logf(1, Severity_Info, true, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -449,7 +446,7 @@ func (v Verbose) Infoln(args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) Infof(format string, args ...any) {
 	if v {
-		logf(1, logsink.Info, true, noStack, format, args...)
+		logf(1, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -463,7 +460,7 @@ func (v Verbose) InfoContext(ctx context.Context, args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) InfoContextf(ctx context.Context, format string, args ...any) {
 	if v {
-		ctxlogf(ctx, 1, logsink.Info, true, noStack, format, args...)
+		ctxlogf(ctx, 1, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -471,7 +468,7 @@ func (v Verbose) InfoContextf(ctx context.Context, format string, args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) InfoContextDepth(ctx context.Context, depth int, args ...any) {
 	if v {
-		ctxlogf(ctx, depth+1, logsink.Info, true, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -479,7 +476,7 @@ func (v Verbose) InfoContextDepth(ctx context.Context, depth int, args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) InfoContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if v {
-		ctxlogf(ctx, depth+1, logsink.Info, true, noStack, format, args...)
+		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -495,24 +492,24 @@ func Debug(args ...any) {
 // information is emitted. When depth > 0, depth frames are skipped in the call stack
 // and the final frame is treated like the original callee to Debug.
 func DebugDepth(depth int, args ...any) {
-	logf(depth+1, logsink.Debug, false, noStack, defaultFormat(args), args...)
+	logf(depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
 }
 
 // DebugDepthf acts as DebugDepth but with format string.
 func DebugDepthf(depth int, format string, args ...any) {
-	logf(depth+1, logsink.Debug, false, noStack, format, args...)
+	logf(depth+1, Severity_Debug, false, noStack, format, args...)
 }
 
 // Debugln logs to the DEBUG log.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Debugln(args ...any) {
-	logf(1, logsink.Debug, false, noStack, lnFormat(args), args...)
+	logf(1, Severity_Debug, false, noStack, lnFormat(args), args...)
 }
 
 // Debugf logs to the DEBUG log.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Debugf(format string, args ...any) {
-	logf(1, logsink.Debug, false, noStack, format, args...)
+	logf(1, Severity_Debug, false, noStack, format, args...)
 }
 
 // DebugContext is like [Debug], but with an extra [context.Context] parameter. The
@@ -524,19 +521,19 @@ func DebugContext(ctx context.Context, args ...any) {
 // DebugContextf is like [Debugf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, logsink.Debug, false, noStack, format, args...)
+	ctxlogf(ctx, 1, Severity_Debug, false, noStack, format, args...)
 }
 
 // DebugContextDepth is like [DebugDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Debug, false, noStack, defaultFormat(args), args...)
+	ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
 }
 
 // DebugContextDepthf is like [DebugDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Debug, false, noStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, format, args...)
 }
 
 // Info logs to the INFO log.
@@ -551,24 +548,24 @@ func Info(args ...any) {
 // information is emitted. When depth > 0, depth frames are skipped in the call stack
 // and the final frame is treated like the original callee to Info.
 func InfoDepth(depth int, args ...any) {
-	logf(depth+1, logsink.Info, false, noStack, defaultFormat(args), args...)
+	logf(depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
 }
 
 // InfoDepthf acts as InfoDepth but with format string.
 func InfoDepthf(depth int, format string, args ...any) {
-	logf(depth+1, logsink.Info, false, noStack, format, args...)
+	logf(depth+1, Severity_Info, false, noStack, format, args...)
 }
 
 // Infoln logs to the INFO log.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Infoln(args ...any) {
-	logf(1, logsink.Info, false, noStack, lnFormat(args), args...)
+	logf(1, Severity_Info, false, noStack, lnFormat(args), args...)
 }
 
 // Infof logs to the INFO log.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Infof(format string, args ...any) {
-	logf(1, logsink.Info, false, noStack, format, args...)
+	logf(1, Severity_Info, false, noStack, format, args...)
 }
 
 // InfoContext is like [Info], but with an extra [context.Context] parameter. The
@@ -580,19 +577,19 @@ func InfoContext(ctx context.Context, args ...any) {
 // InfoContextf is like [Infof], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, logsink.Info, false, noStack, format, args...)
+	ctxlogf(ctx, 1, Severity_Info, false, noStack, format, args...)
 }
 
 // InfoContextDepth is like [InfoDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Info, false, noStack, defaultFormat(args), args...)
+	ctxlogf(ctx, depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
 }
 
 // InfoContextDepthf is like [InfoDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Info, false, noStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Info, false, noStack, format, args...)
 }
 
 // Warning logs to the WARNING and INFO logs.
@@ -604,25 +601,25 @@ func Warning(args ...any) {
 // WarningDepth acts as Warning but uses depth to determine which call frame to log.
 // WarningDepth(0, "msg") is the same as Warning("msg").
 func WarningDepth(depth int, args ...any) {
-	logf(depth+1, logsink.Warning, false, noStack, defaultFormat(args), args...)
+	logf(depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
 }
 
 // WarningDepthf acts as Warningf but uses depth to determine which call frame to log.
 // WarningDepthf(0, "msg") is the same as Warningf("msg").
 func WarningDepthf(depth int, format string, args ...any) {
-	logf(depth+1, logsink.Warning, false, noStack, format, args...)
+	logf(depth+1, Severity_Warning, false, noStack, format, args...)
 }
 
 // Warningln logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Warningln(args ...any) {
-	logf(1, logsink.Warning, false, noStack, lnFormat(args), args...)
+	logf(1, Severity_Warning, false, noStack, lnFormat(args), args...)
 }
 
 // Warningf logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Warningf(format string, args ...any) {
-	logf(1, logsink.Warning, false, noStack, format, args...)
+	logf(1, Severity_Warning, false, noStack, format, args...)
 }
 
 // WarningContext is like [Warning], but with an extra [context.Context] parameter. The
@@ -634,19 +631,19 @@ func WarningContext(ctx context.Context, args ...any) {
 // WarningContextf is like [Warningf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, logsink.Warning, false, noStack, format, args...)
+	ctxlogf(ctx, 1, Severity_Warning, false, noStack, format, args...)
 }
 
 // WarningContextDepth is like [WarningDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Warning, false, noStack, defaultFormat(args), args...)
+	ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
 }
 
 // WarningContextDepthf is like [WarningDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Warning, false, noStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, format, args...)
 }
 
 // Error logs to the ERROR, WARNING, and INFO logs.
@@ -658,25 +655,25 @@ func Error(args ...any) {
 // ErrorDepth acts as Error but uses depth to determine which call frame to log.
 // ErrorDepth(0, "msg") is the same as Error("msg").
 func ErrorDepth(depth int, args ...any) {
-	logf(depth+1, logsink.Error, false, noStack, defaultFormat(args), args...)
+	logf(depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
 }
 
 // ErrorDepthf acts as Errorf but uses depth to determine which call frame to log.
 // ErrorDepthf(0, "msg") is the same as Errorf("msg").
 func ErrorDepthf(depth int, format string, args ...any) {
-	logf(depth+1, logsink.Error, false, noStack, format, args...)
+	logf(depth+1, Severity_Error, false, noStack, format, args...)
 }
 
 // Errorln logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Errorln(args ...any) {
-	logf(1, logsink.Error, false, noStack, lnFormat(args), args...)
+	logf(1, Severity_Error, false, noStack, lnFormat(args), args...)
 }
 
 // Errorf logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...any) {
-	logf(1, logsink.Error, false, noStack, format, args...)
+	logf(1, Severity_Error, false, noStack, format, args...)
 }
 
 // ErrorContext is like [Error], but with an extra [context.Context] parameter. The
@@ -688,23 +685,23 @@ func ErrorContext(ctx context.Context, args ...any) {
 // ErrorContextf is like [Errorf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, logsink.Error, false, noStack, format, args...)
+	ctxlogf(ctx, 1, Severity_Error, false, noStack, format, args...)
 }
 
 // ErrorContextDepth is like [ErrorDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Error, false, noStack, defaultFormat(args), args...)
+	ctxlogf(ctx, depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
 }
 
 // ErrorContextDepthf is like [ErrorDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Error, false, noStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Error, false, noStack, format, args...)
 }
 
 func ctxfatalf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Fatal, false, withStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Fatal, false, withStack, format, args...)
 	flushAndAbort()
 }
 
@@ -781,7 +778,7 @@ func FatalContextDepthf(ctx context.Context, depth int, format string, args ...a
 }
 
 func ctxexitf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, logsink.Fatal, false, noStack, format, args...)
+	ctxlogf(ctx, depth+1, Severity_Fatal, false, noStack, format, args...)
 	sinks.file.Flush()
 	os.Exit(1)
 }

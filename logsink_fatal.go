@@ -1,4 +1,4 @@
-package logsink
+package mlog
 
 import (
 	"sync/atomic"
@@ -12,9 +12,9 @@ func fatalMessageStore(e savedEntry) {
 
 var fatalMessage unsafe.Pointer // savedEntry stored with CompareAndSwapPointer
 
-// FatalMessage returns the Meta and message contents of the first message
+// LogsinkFatalMessage returns the Meta and message contents of the first message
 // logged with Fatal severity, or false if none has occurred.
-func FatalMessage() (*Meta, []byte, bool) {
+func LogsinkFatalMessage() (*LogsinkMeta, []byte, bool) {
 	e := (*savedEntry)(atomic.LoadPointer(&fatalMessage))
 	if e == nil {
 		return nil, nil, false
@@ -26,7 +26,7 @@ func FatalMessage() (*Meta, []byte, bool) {
 //
 //go:norace
 //go:nosplit
-func DoNotUseRacyFatalMessage() (*Meta, []byte, bool) {
+func DoNotUseRacyFatalMessage() (*LogsinkMeta, []byte, bool) {
 	e := (*savedEntry)(fatalMessage)
 	if e == nil {
 		return nil, nil, false

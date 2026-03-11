@@ -1,7 +1,7 @@
 // stackdump_test checks that the heuristics the stackdump package applies to
 // prune frames work as expected in production Go compilers.
 
-package stackdump_test
+package mlog_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/odysseythink/mlog/internal/stackdump"
+	"github.com/odysseythink/mlog"
 )
 
 var file string
@@ -20,13 +20,13 @@ func init() {
 }
 
 func TestCallerText(t *testing.T) {
-	stack := stackdump.CallerText(0)
+	stack := mlog.CallerText(0)
 	_, _, line, _ := runtime.Caller(0)
 	line--
 
 	wantRE := regexp.MustCompile(fmt.Sprintf(
 		`^goroutine \d+ \[running\]:
-github.com/golang/glog/internal/stackdump_test\.TestCallerText(\([^)]*\))?
+github.com/odysseythink/mlog/stackdump_test\.TestCallerText(\([^)]*\))?
 	%v:%v.*
 `, file, line))
 	if !wantRE.Match(stack) {
@@ -40,7 +40,7 @@ github.com/golang/glog/internal/stackdump_test\.TestCallerText(\([^)]*\))?
 
 func callerAt(calls int, depth int) (stack []byte) {
 	if calls == 1 {
-		return stackdump.CallerText(depth)
+		return mlog.CallerText(depth)
 	}
 	return callerAt(calls-1, depth)
 }
@@ -69,13 +69,13 @@ func TestCallerTextSkip(t *testing.T) {
 			fmt.Fprintf(wantREBuf, "\n|$")
 		} else {
 			for n := tc.callerAtFrames; n > 0; n-- {
-				fmt.Fprintf(wantREBuf, `github.com/golang/glog/internal/stackdump_test\.callerAt(\([^)]*\))?
+				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog/stackdump_test\.callerAt(\([^)]*\))?
 	%v:\d+.*
 `, file)
 			}
 
 			if tc.depth <= calls {
-				fmt.Fprintf(wantREBuf, `github.com/golang/glog/internal/stackdump_test\.TestCallerTextSkip(\([^)]*\))?
+				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog/stackdump_test\.TestCallerTextSkip(\([^)]*\))?
 	%v:\d+.*
 `, file)
 			}
@@ -84,14 +84,14 @@ func TestCallerTextSkip(t *testing.T) {
 		wantRE := regexp.MustCompile(wantREBuf.String())
 
 		if !wantRE.Match(stack) {
-			t.Errorf("for %v calls, stackdump.CallerText(%v) =\n%s\n\nwant matching regexp:\n%s", calls, tc.depth, stack, wantRE.String())
+			t.Errorf("for %v calls, mlog.CallerText(%v) =\n%s\n\nwant matching regexp:\n%s", calls, tc.depth, stack, wantRE.String())
 		}
 	}
 }
 
 func pcAt(calls int, depth int) (stack []uintptr) {
 	if calls == 1 {
-		return stackdump.CallerPC(depth)
+		return mlog.CallerPC(depth)
 	}
 	stack = pcAt(calls-1, depth)
 	runtime.Gosched() // Thwart tail-call optimization.
@@ -116,17 +116,17 @@ func TestCallerPC(t *testing.T) {
 		stack := pcAt(calls, tc.depth)
 		if tc.wantEndOfStack {
 			if len(stack) != 0 {
-				t.Errorf("for %v calls, stackdump.CallerPC(%v) =\n%q\nwant []", calls, tc.depth, stack)
+				t.Errorf("for %v calls, mlog.CallerPC(%v) =\n%q\nwant []", calls, tc.depth, stack)
 			}
 			continue
 		}
 
 		wantFuncs := []string{}
 		for n := tc.pcAtFrames; n > 0; n-- {
-			wantFuncs = append(wantFuncs, `github.com/golang/glog/internal/stackdump_test\.pcAt$`)
+			wantFuncs = append(wantFuncs, `github.com/odysseythink/mlog/stackdump_test\.pcAt$`)
 		}
 		if tc.depth <= calls {
-			wantFuncs = append(wantFuncs, `^github.com/golang/glog/internal/stackdump_test\.TestCallerPC$`)
+			wantFuncs = append(wantFuncs, `^github.com/odysseythink/mlog/stackdump_test\.TestCallerPC$`)
 		}
 
 		gotFuncs := []string{}
@@ -146,7 +146,7 @@ func TestCallerPC(t *testing.T) {
 			}
 		}
 		if !ok {
-			t.Errorf("for %v calls, stackdump.CallerPC(%v) =\n%q\nwant %q", calls, tc.depth, gotFuncs, wantFuncs)
+			t.Errorf("for %v calls, mlog.CallerPC(%v) =\n%q\nwant %q", calls, tc.depth, gotFuncs, wantFuncs)
 		}
 	}
 }

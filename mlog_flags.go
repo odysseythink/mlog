@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // modulePat contains a filter for the -vmodule flag.
@@ -310,25 +308,25 @@ func (t *traceLocations) match(file string, line int) bool {
 	return false
 }
 
-// severityFlag is an atomic flag.Value implementation for logsink.Severity.
+// severityFlag is an atomic flag.Value implementation for Severity.
 type severityFlag int32
 
-func (s *severityFlag) get() logsink.Severity {
-	return logsink.Severity(atomic.LoadInt32((*int32)(s)))
+func (s *severityFlag) get() Severity {
+	return Severity(atomic.LoadInt32((*int32)(s)))
 }
 func (s *severityFlag) String() string { return strconv.FormatInt(int64(*s), 10) }
 func (s *severityFlag) Get() any       { return s.get() }
 func (s *severityFlag) Set(value string) error {
-	threshold, err := logsink.ParseSeverity(value)
+	threshold, err := ParseSeverity(value)
 	if err != nil {
 		// Not a severity name.  Try a raw number.
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return err
 		}
-		threshold = logsink.Severity(v)
-		if threshold < logsink.Info || threshold > logsink.Fatal {
-			return fmt.Errorf("Severity %d out of range (min %d, max %d).", v, logsink.Info, logsink.Fatal)
+		threshold = Severity(v)
+		if threshold < Severity_Info || threshold > Severity_Fatal {
+			return fmt.Errorf("Severity %d out of range (min %d, max %d).", v, Severity_Info, Severity_Fatal)
 		}
 	}
 	atomic.StoreInt32((*int32)(s), int32(threshold))
@@ -370,7 +368,7 @@ func init() {
 
 	flag.Var(&logBacktraceAt, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
 
-	stderrThreshold = severityFlag(logsink.Error)
+	stderrThreshold = severityFlag(Severity_Error)
 
 	flag.BoolVar(&toStderr, "logtostderr", false, "log to standard error instead of files")
 	flag.BoolVar(&alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")

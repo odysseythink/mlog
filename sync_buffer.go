@@ -7,8 +7,6 @@ import (
 	"os"
 	"runtime"
 	"time"
-
-	"github.com/odysseythink/mlog/internal/logsink"
 )
 
 // syncBuffer joins a bufio.Writer to its underlying file, providing access to the
@@ -20,7 +18,7 @@ type syncBuffer struct {
 	*bufio.Writer
 	file   *os.File
 	names  []string
-	sev    logsink.Severity
+	sev    Severity
 	nbytes uint64 // The number of bytes written to this file
 	madeAt time.Time
 }
