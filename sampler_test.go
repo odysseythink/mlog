@@ -111,3 +111,35 @@ func TestSamplerIntegration(t *testing.T) {
 		t.Fatal("third allow should fail")
 	}
 }
+
+func BenchmarkSamplerDisabled(b *testing.B) {
+	logSampler.Store((*sampler)(nil))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = getSampler()
+	}
+}
+
+func BenchmarkSamplerEnabled(b *testing.B) {
+	logSampler.Store(newSampler(10000, 10000))
+	s := getSampler()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = s.allow()
+	}
+}
+
+func BenchmarkSamplerSeverityCheck(b *testing.B) {
+	logSampler.Store(newSampler(10000, 10000))
+	s := getSampler()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = s.allowSeverity(Severity_Info)
+	}
+}
