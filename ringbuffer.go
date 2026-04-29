@@ -5,13 +5,6 @@ import (
 	"sync/atomic"
 )
 
-type dropPolicy int
-
-const (
-	dropPolicyBlock dropPolicy = iota
-	dropPolicyDrop
-)
-
 type slot struct {
 	seq   atomic.Uint64
 	entry *logEntry

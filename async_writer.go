@@ -9,12 +9,13 @@ import (
 )
 
 type batchWriter struct {
-	severity Severity
-	ring     *ringBuffer
-	sink     *syncBuffer
-	buf      *bufio.Writer
-	batch    []*logEntry
-	stats    *writerStats
+	severity  Severity
+	ring      *ringBuffer
+	sink      *syncBuffer
+	buf       *bufio.Writer
+	batch     []*logEntry
+	stats     *writerStats
+	pendingAck []chan struct{}
 }
 
 type writerStats struct {
@@ -44,30 +45,43 @@ func (bw *batchWriter) writeBatch(entries []*logEntry, n int) error {
 		if entry.refCnt.Add(-1) == 0 {
 			putEntryBuf(&entry.data)
 			if entry.ack != nil {
-				close(entry.ack)
+				bw.pendingAck = append(bw.pendingAck, entry.ack)
 			}
 			logEntryPool.Put(entry)
 		}
 		bw.stats.written.Add(1)
 	}
 	if bw.buf.Buffered() >= bufioHighWaterMark {
-		if err := bw.buf.Flush(); err != nil {
+		if err := bw.flushBuf(); err != nil {
 			return err
 		}
-		bw.stats.flushed.Add(1)
 	}
 	return nil
 }
 
-func (bw *batchWriter) flush() error {
+// flushBuf flushes the bufio layers, signals pending acks, and syncs the file.
+func (bw *batchWriter) flushBuf() error {
 	if err := bw.buf.Flush(); err != nil {
 		return err
 	}
 	if err := bw.sink.Flush(); err != nil {
 		return err
 	}
+	bw.signalAcks()
 	bw.stats.flushed.Add(1)
 	return bw.sink.Sync()
+}
+
+// signalAcks closes all pending ack channels, unblocking callers waiting on ERROR ack.
+func (bw *batchWriter) signalAcks() {
+	for _, ack := range bw.pendingAck {
+		close(ack)
+	}
+	bw.pendingAck = bw.pendingAck[:0]
+}
+
+func (bw *batchWriter) flush() error {
+	return bw.flushBuf()
 }
 
 type asyncWriter struct {
@@ -137,7 +151,12 @@ func (aw *asyncWriter) writerLoop() {
 			n := aw.bw.ring.drainBatch(aw.bw.batch, aw.batchSize)
 			if n > 0 {
 				aw.bw.writeBatch(aw.bw.batch, n)
-				needFlush = true
+				if len(aw.bw.pendingAck) > 0 {
+					aw.bw.flush()
+					needFlush = false
+				} else {
+					needFlush = true
+				}
 				spinCount = 0
 			} else {
 				if spinCount < 256 {
@@ -173,13 +192,23 @@ func (aw *asyncWriter) wake() {
 	}
 }
 
+// flush requests an immediate flush and waits for completion.
 func (aw *asyncWriter) flush() error {
 	respCh := make(chan error, 1)
 	select {
 	case aw.flushReqCh <- respCh:
 		return <-respCh
 	default:
-		return nil
+		// A flush is already pending. Wait for the writer to drain its queue
+		// by sending a second request via wake which triggers another drain cycle.
+		aw.wake()
+		// Retry sending the flush request.
+		select {
+		case aw.flushReqCh <- respCh:
+			return <-respCh
+		default:
+			return nil
+		}
 	}
 }
 

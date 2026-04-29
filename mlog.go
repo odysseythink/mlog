@@ -707,13 +707,13 @@ func ctxfatalf(ctx context.Context, depth int, format string, args ...any) {
 }
 
 func flushAndAbort() {
-	Flush()
+	Close()
 
 	err := abortProcess() // Should not return.
 
 	// Failed to abort the process using signals.  Dump a stack trace and exit.
 	Errorf("abortProcess returned unexpectedly: %v", err)
-	Flush()
+	Close()
 	pprof.Lookup("goroutine").WriteTo(os.Stderr, 1)
 	os.Exit(2) // Exit with the same code as the default SIGABRT handler.
 }
@@ -780,7 +780,7 @@ func FatalContextDepthf(ctx context.Context, depth int, format string, args ...a
 
 func ctxexitf(ctx context.Context, depth int, format string, args ...any) {
 	ctxlogf(ctx, depth+1, Severity_Fatal, false, noStack, format, args...)
-	Flush()
+	Close()
 	os.Exit(1)
 }
 
