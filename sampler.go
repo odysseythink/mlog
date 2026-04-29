@@ -38,6 +38,10 @@ func (s *sampler) refill() {
 	if newTokens <= 0 {
 		return
 	}
+	// Cap to maxTokens to recover from integer overflow after long idle periods
+	if newTokens > s.maxTokens {
+		newTokens = s.maxTokens
+	}
 
 	if s.lastRefill.CompareAndSwap(last, now) {
 		for {
