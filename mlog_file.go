@@ -199,6 +199,25 @@ var sinks struct {
 	file   fileSinkSet
 }
 
+var logSampler atomic.Value // *sampler, nil when disabled
+var samplerOnce sync.Once
+
+func getSampler() *sampler {
+	if s := logSampler.Load(); s != nil {
+		return s.(*sampler)
+	}
+	samplerOnce.Do(func() {
+		if *logRateLimit > 0 {
+			rate := int64(*logRateLimit)
+			logSampler.Store(newSampler(rate, rate))
+		}
+	})
+	if s := logSampler.Load(); s != nil {
+		return s.(*sampler)
+	}
+	return nil
+}
+
 func init() {
 	// Register stderr first: that way if we crash during file-writing at least
 	// the log will have gone somewhere.
