@@ -118,6 +118,51 @@ func TestSamplerIntegration(t *testing.T) {
 	}
 }
 
+func TestSamplerMaxTokensCap(t *testing.T) {
+	s := newSampler(100, 3)
+
+	// Consume all tokens
+	for i := 0; i < 3; i++ {
+		if !s.allow() {
+			t.Fatalf("allow %d should succeed", i)
+		}
+	}
+	if s.allow() {
+		t.Fatal("should be empty")
+	}
+
+	// Wait long enough for many refills (> maxTokens worth)
+	time.Sleep(100 * time.Millisecond)
+
+	// Should have at most maxTokens (3) refilled
+	allowed := 0
+	for i := 0; i < 10; i++ {
+		if s.allow() {
+			allowed++
+		}
+	}
+	if allowed > 3 {
+		t.Fatalf("refilled %d tokens, maxTokens cap should be 3", allowed)
+	}
+}
+
+func TestSamplerInitDisabled(t *testing.T) {
+	// With logRateLimit=0 (default), getSampler should return nil
+	orig := logSampler.Load()
+	defer func() {
+		if orig != nil {
+			logSampler.Store(orig)
+		} else {
+			logSampler.Store((*sampler)(nil))
+		}
+	}()
+
+	logSampler.Store((*sampler)(nil))
+	if s := getSampler(); s != nil {
+		t.Fatal("getSampler should return nil when disabled")
+	}
+}
+
 func BenchmarkSamplerDisabled(b *testing.B) {
 	logSampler.Store((*sampler)(nil))
 
