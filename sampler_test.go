@@ -83,7 +83,13 @@ func TestSamplerNil(t *testing.T) {
 		t.Fatal("nil sampler should always allow")
 	}
 	if !s.allowSeverity(Severity_Info) {
-		t.Fatal("nil sampler should always allowSeverity")
+		t.Fatal("nil sampler should always allowSeverity Info")
+	}
+	if !s.allowSeverity(Severity_Error) {
+		t.Fatal("nil sampler should always allowSeverity Error")
+	}
+	if !s.allowSeverity(Severity_Fatal) {
+		t.Fatal("nil sampler should always allowSeverity Fatal")
 	}
 }
 
@@ -119,6 +125,18 @@ func BenchmarkSamplerDisabled(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = getSampler()
+	}
+}
+
+func BenchmarkSamplerDisabledFullPath(b *testing.B) {
+	logSampler.Store((*sampler)(nil))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if s := getSampler(); s != nil {
+			_ = s.allowSeverity(Severity_Info)
+		}
 	}
 }
 

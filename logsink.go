@@ -218,6 +218,7 @@ func textPrintf(m *LogsinkMeta, textSinks []TextSink, format string, args ...any
 	if s := getSampler(); s != nil {
 		if !s.allowSeverity(m.Severity) {
 			atomic.AddInt64(&Stats.Dropped.lines, 1)
+			// bytes not counted: entry is dropped before formatting
 			return 0, nil
 		}
 	}

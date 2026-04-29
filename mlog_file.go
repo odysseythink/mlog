@@ -223,13 +223,13 @@ func init() {
 	}
 	TextSinks = append(TextSinks, &sinks.file)
 
-		// Initialize per-severity rings
-		for i := 0; i < numSeverity; i++ {
-			sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
-		}
-
-		initSampler()
+	// Initialize per-severity rings
+	for i := 0; i < numSeverity; i++ {
+		sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
 	}
+
+	initSampler()
+}
 
 // stderrSink is a TextSink that writes log entries to stderr
 // if they meet certain conditions.

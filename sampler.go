@@ -73,6 +73,9 @@ func (s *sampler) allow() bool {
 // allowSeverity returns true if the given severity should be allowed.
 // Error and Fatal always bypass the rate limiter.
 func (s *sampler) allowSeverity(sev Severity) bool {
+	if s == nil {
+		return true
+	}
 	if sev >= Severity_Error {
 		return true
 	}
