@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -185,9 +186,17 @@ type flushSyncWriter interface {
 	filenames() []string
 }
 
+// fileSinkSet manages per-severity ring buffers, async writers, and file sinks.
+type fileSinkSet struct {
+	rings   [numSeverity]*ringBuffer
+	writers [numSeverity]*asyncWriter
+	sinks   [numSeverity]*fileSink
+	mu      sync.Mutex
+}
+
 var sinks struct {
 	stderr stderrSink
-	file   fileSink
+	file   fileSinkSet
 }
 
 func init() {
@@ -198,8 +207,10 @@ func init() {
 	}
 	TextSinks = append(TextSinks, &sinks.file)
 
-	sinks.file.flushChan = make(chan Severity, 1)
-	go sinks.file.flushDaemon()
+	// Initialize per-severity rings
+	for i := 0; i < numSeverity; i++ {
+		sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
+	}
 }
 
 // stderrSink is a TextSink that writes log entries to stderr
@@ -230,117 +241,127 @@ func (s *stderrSink) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 	return n, err
 }
 
-// fileSink is a TextSink that prints to a set of Google log files.
+// fileSink is a per-severity file sink used by fileSinkSet.
 type fileSink struct {
-	mu sync.Mutex
-	// file holds writer for each of the log types.
-	file      flushSyncWriter
-	flushChan chan Severity
+	mu   sync.Mutex
+	file flushSyncWriter
 }
 
-// Enabled implements TextSink.Enabled.  It returns true if google.Init
-// has run and both --disable_log_to_disk and --logtostderr are false.
-func (s *fileSink) Enabled(m *LogsinkMeta) bool {
+// Enabled implements TextSink.Enabled.
+func (fss *fileSinkSet) Enabled(m *LogsinkMeta) bool {
 	return !toStderr
 }
 
-// Emit implements Severity.Emit
-func (s *fileSink) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err = s.createMissingFiles(m.Severity); err != nil {
-		return 0, err
+// Emit implements TextSink.Emit with multi-sink fan-out.
+func (fss *fileSinkSet) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
+	sev := m.Severity
+	if sev >= Severity_Fatal {
+		sev = Severity_Error
 	}
 
-	n = len(data)
-	if int(m.Severity) >= *logBufLevel {
-		if _, fErr := s.file.Write(data); fErr != nil && err == nil {
-			err = fErr // Take the first error.
+	// Lazy-init writers and files on first use
+	fss.mu.Lock()
+	for s := Severity_Debug; s <= sev; s++ {
+		if fss.writers[s] == nil {
+			fs := &fileSink{}
+			sb := &syncBuffer{sink: fs, sev: s}
+			if err := sb.rotateFile(timeNow()); err != nil {
+				fss.mu.Unlock()
+				return 0, err
+			}
+			fs.file = sb
+			fss.sinks[s] = fs
+			bw := newBatchWriter(s, fss.rings[s], sb, *batchSizeFlag)
+			fss.writers[s] = newAsyncWriter(bw, *batchSizeFlag)
 		}
+	}
+	fss.mu.Unlock()
+
+	// Acquire entry and set refCount = number of rings it will be pushed to
+	numRings := int(sev) + 1
+	entry := acquireEntry(data, m, numRings)
+
+	// Publish into rings in ascending severity order
+	dropped := false
+	for s := Severity_Debug; s <= sev; s++ {
+		if !fss.rings[s].tryPush(entry) {
+			dropped = true
+			fss.rings[s].dropped.Add(1)
+		}
+		fss.writers[s].wake()
+	}
+
+	if dropped {
+		atomic.AddInt64(&Stats.Dropped.lines, 1)
+		atomic.AddInt64(&Stats.Dropped.bytes, int64(len(data)))
+	}
+
+	// ERROR and above: block on ack for durable visibility
+	if m.Severity >= Severity_Error {
 		select {
-		case s.flushChan <- m.Severity:
-		default:
+		case <-entry.ack:
+		case <-time.After(5 * time.Second):
+			fmt.Fprintf(os.Stderr, "mlog: ERROR ack timeout\n")
 		}
 	}
 
-	return n, err
+	return len(data), nil
 }
 
-// createMissingFiles creates all the log files for severity from infoLog up to
-// upTo that have not already been created.
-// s.mu is held.
-func (s *fileSink) createMissingFiles(upTo Severity) error {
-	if s.file != nil {
-		return nil
+// acquireEntry gets a pooled logEntry and initializes it.
+func acquireEntry(data []byte, meta *LogsinkMeta, refCount int) *logEntry {
+	entry := logEntryPool.Get().(*logEntry)
+	bp := entryBufPool.Get().(*[]byte)
+	*bp = append((*bp)[:0], data...)
+	entry.data = *bp
+	entry.meta = meta
+	entry.refCnt.Store(int32(refCount))
+	if meta.Severity >= Severity_Error {
+		entry.ack = make(chan struct{})
+	} else {
+		entry.ack = nil
 	}
-	now := time.Now()
-	// Files are created in increasing severity order, so we can be assured that
-	// if a high severity logfile exists, then so do all of lower severity.
-
-	sb := &syncBuffer{
-		sink: s,
-		sev:  Severity_Debug,
-	}
-	if err := sb.rotateFile(now); err != nil {
-		return err
-	}
-	s.file = sb
-
-	return nil
-}
-
-// flushDaemon periodically flushes the log file buffers.
-func (s *fileSink) flushDaemon() {
-	tick := time.NewTicker(30 * time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-tick.C:
-			s.Flush()
-		case sev := <-s.flushChan:
-			s.flush(sev)
-		}
-	}
+	return entry
 }
 
 // Flush flushes all pending log I/O.
 func Flush() {
-	sinks.file.Flush()
+	for i := 0; i < numSeverity; i++ {
+		if w := sinks.file.writers[i]; w != nil {
+			w.flush()
+		}
+	}
 }
 
-// Flush flushes all the logs and attempts to "sync" their data to disk.
-func (s *fileSink) Flush() error {
-	return s.flush(Severity(*logBufLevel))
+// Close gracefully shuts down all writers.
+func Close() error {
+	for i := 0; i < numSeverity; i++ {
+		if w := sinks.file.writers[i]; w != nil {
+			w.close()
+		}
+	}
+	return nil
 }
 
-// flush flushes all logs of severity threshold or greater.
-func (s *fileSink) flush(threshold Severity) error {
-	var firstErr error
-	updateErr := func(err error) {
-		if err != nil && firstErr == nil {
-			firstErr = err
+// FatalShutdown drains all rings, writes FATAL entry to all files, fsyncs, and exits.
+// Must be called before os.Exit on Fatal paths.
+func FatalShutdown(fatalData []byte) {
+	for i := 0; i < numSeverity; i++ {
+		if sinks.file.writers[i] != nil {
+			sinks.file.writers[i].close()
 		}
 	}
 
-	// Remember where we flushed, so we can call sync without holding
-	// the lock.
-	var files []flushSyncWriter
-	func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		// Flush from fatal down, in case there's trouble flushing.
-		if file := s.file; file != nil {
-			updateErr(file.Flush())
-			files = append(files, file)
+	// Write FATAL entry synchronously to all severity files
+	for s := Severity_Debug; s < numSeverity; s++ {
+		if sink := sinks.file.sinks[s]; sink != nil && sink.file != nil {
+			sink.mu.Lock()
+			sink.file.Write(fatalData)
+			sink.file.Flush()
+			sink.file.Sync()
+			sink.mu.Unlock()
 		}
-	}()
-
-	for _, file := range files {
-		updateErr(file.Sync())
 	}
-
-	return firstErr
 }
 
 // Names returns the names of the log files holding the FATAL, ERROR,
@@ -349,17 +370,20 @@ func (s *fileSink) flush(threshold Severity) error {
 // written). This may return multiple names if the log type requested
 // has rolled over.
 func Names(s string) ([]string, error) {
-	_, err := ParseSeverity(s)
+	sev, err := ParseSeverity(s)
 	if err != nil {
 		return nil, err
+	}
+	if sev >= Severity_Fatal {
+		sev = Severity_Error
 	}
 
 	sinks.file.mu.Lock()
 	defer sinks.file.mu.Unlock()
-	f := sinks.file.file
-	if f == nil {
+	f := sinks.file.sinks[sev]
+	if f == nil || f.file == nil {
 		return nil, ErrNoLog
 	}
 
-	return f.filenames(), nil
+	return f.file.filenames(), nil
 }
