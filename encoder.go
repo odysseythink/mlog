@@ -2,7 +2,6 @@ package mlog
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 // Encoder serializes an Entry into a byte slice.
@@ -10,8 +9,13 @@ type Encoder interface {
 	EncodeEntry(entry *Entry) []byte
 }
 
-// activeEncoder holds the currently configured Encoder (thread-safe).
-var activeEncoder atomic.Value // stores Encoder
+// encoderHolder wraps the active Encoder with a mutex for thread-safe swapping.
+type encoderHolder struct {
+	mu      sync.RWMutex
+	encoder Encoder
+}
+
+var activeEncoder = &encoderHolder{}
 
 var encoderOnce sync.Once
 
@@ -19,22 +23,30 @@ func getEncoder() Encoder {
 	encoderOnce.Do(func() {
 		switch *logEncoderFlag {
 		case "json":
-			activeEncoder.Store(&jsonEncoder{})
+			activeEncoder.encoder = &jsonEncoder{}
 		case "logfmt":
-			activeEncoder.Store(&logfmtEncoder{})
+			activeEncoder.encoder = &logfmtEncoder{}
 		default:
-			activeEncoder.Store(defaultTextEncoder)
+			activeEncoder.encoder = defaultTextEncoder
 		}
 	})
-	if v := activeEncoder.Load(); v != nil {
-		return v.(Encoder)
+	activeEncoder.mu.RLock()
+	enc := activeEncoder.encoder
+	activeEncoder.mu.RUnlock()
+	if enc != nil {
+		return enc
 	}
 	return defaultTextEncoder
 }
 
 // SetEncoder replaces the active encoder used by the logging pipeline.
 func SetEncoder(enc Encoder) {
-	activeEncoder.Store(enc)
+	encoderOnce.Do(func() {
+		activeEncoder.encoder = defaultTextEncoder
+	})
+	activeEncoder.mu.Lock()
+	activeEncoder.encoder = enc
+	activeEncoder.mu.Unlock()
 }
 
 // encBufPool reuses []byte buffers for encoder output.
