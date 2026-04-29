@@ -13,8 +13,19 @@ type Encoder interface {
 // activeEncoder holds the currently configured Encoder (thread-safe).
 var activeEncoder atomic.Value // stores Encoder
 
-// getEncoder returns the active encoder, falling back to the default text encoder.
+var encoderOnce sync.Once
+
 func getEncoder() Encoder {
+	encoderOnce.Do(func() {
+		switch *logEncoderFlag {
+		case "json":
+			activeEncoder.Store(&jsonEncoder{})
+		case "logfmt":
+			activeEncoder.Store(&logfmtEncoder{})
+		default:
+			activeEncoder.Store(defaultTextEncoder)
+		}
+	})
 	if v := activeEncoder.Load(); v != nil {
 		return v.(Encoder)
 	}

@@ -39,11 +39,25 @@ func newBatchWriter(sev Severity, rb *ringBuffer, sb *syncBuffer, batchSize int)
 func (bw *batchWriter) writeBatch(entries []*logEntry, n int) error {
 	for i := 0; i < n; i++ {
 		entry := entries[i]
-		if _, err := bw.buf.Write(entry.data); err != nil {
-			return err
+		var data []byte
+		if entry.data != nil {
+			data = entry.data
+		} else if entry.entry != nil {
+			data = getEncoder().EncodeEntry(entry.entry)
+		}
+		if len(data) > 0 {
+			if _, err := bw.buf.Write(data); err != nil {
+				return err
+			}
 		}
 		if entry.refCnt.Add(-1) == 0 {
-			putEntryBuf(&entry.data)
+			if entry.data != nil {
+				putEntryBuf(&entry.data)
+			}
+			if entry.entry != nil {
+				putEncBuf(&data)
+				putEntry(entry.entry)
+			}
 			if entry.ack != nil {
 				bw.pendingAck = append(bw.pendingAck, entry.ack)
 			}
