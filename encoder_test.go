@@ -67,3 +67,71 @@ func TestTextEncoderWithFields(t *testing.T) {
 		t.Fatalf("missing bool field in: %s", s)
 	}
 }
+
+func TestJSONEncoderWithFields(t *testing.T) {
+	now := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	e := &Entry{
+		Severity: Severity_Info,
+		Time:     now.UnixNano(),
+		Message:  "hello",
+		File:     "main.go",
+		Line:     1,
+		Fields: []Field{
+			Int("count", 42),
+			String("name", "test"),
+			Bool("ok", true),
+			Float64("ratio", 3.14),
+		},
+	}
+
+	enc := &jsonEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+
+	s := string(out)
+	if !strings.Contains(s, `"count":42`) {
+		t.Fatalf("missing int field in: %s", s)
+	}
+	if !strings.Contains(s, `"name":"test"`) {
+		t.Fatalf("missing string field in: %s", s)
+	}
+	if !strings.Contains(s, `"ok":true`) {
+		t.Fatalf("missing bool field in: %s", s)
+	}
+	if !strings.Contains(s, `"msg":"hello"`) {
+		t.Fatalf("missing msg in: %s", s)
+	}
+	if !strings.HasPrefix(s, "{") || !strings.Contains(s, "}\n") {
+		t.Fatalf("not JSON object: %s", s)
+	}
+}
+
+func TestLogfmtEncoderWithFields(t *testing.T) {
+	now := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	e := &Entry{
+		Severity: Severity_Info,
+		Time:     now.UnixNano(),
+		Message:  "hello",
+		File:     "main.go",
+		Line:     1,
+		Fields: []Field{
+			Int("count", 42),
+			String("name", "test"),
+		},
+	}
+
+	enc := &logfmtEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+
+	s := string(out)
+	if !strings.Contains(s, "level=INFO") {
+		t.Fatalf("missing level in: %s", s)
+	}
+	if !strings.Contains(s, "count=42") {
+		t.Fatalf("missing int field in: %s", s)
+	}
+	if !strings.Contains(s, "name=test") {
+		t.Fatalf("missing string field in: %s", s)
+	}
+}
