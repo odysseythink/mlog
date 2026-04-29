@@ -86,3 +86,28 @@ func TestSamplerNil(t *testing.T) {
 		t.Fatal("nil sampler should always allowSeverity")
 	}
 }
+
+func TestSamplerIntegration(t *testing.T) {
+	orig := logSampler.Load()
+	defer func() {
+		if orig != nil {
+			logSampler.Store(orig)
+		} else {
+			logSampler.Store((*sampler)(nil))
+		}
+	}()
+
+	logSampler.Store(newSampler(2, 2))
+
+	// First two should succeed
+	if !getSampler().allow() {
+		t.Fatal("first allow should succeed")
+	}
+	if !getSampler().allow() {
+		t.Fatal("second allow should succeed")
+	}
+	// Third should fail
+	if getSampler().allow() {
+		t.Fatal("third allow should fail")
+	}
+}

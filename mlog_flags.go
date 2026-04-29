@@ -348,8 +348,9 @@ var (
 )
 
 var (
-	ringSizeFlag  = flag.Int("log_ring_size", defaultRingSize, "Size of the async log ring buffer per severity (power of 2)")
-	batchSizeFlag = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
+	ringSizeFlag    = flag.Int("log_ring_size", defaultRingSize, "Size of the async log ring buffer per severity (power of 2)")
+	batchSizeFlag   = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
+	logRateLimit    = flag.Int("log_rate_limit", 0, "Maximum log entries per second (0 = disabled)")
 )
 
 // verboseEnabled returns whether the caller at the given depth should emit

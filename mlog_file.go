@@ -199,6 +199,22 @@ var sinks struct {
 	file   fileSinkSet
 }
 
+var logSampler atomic.Value // *sampler, nil when disabled
+
+func getSampler() *sampler {
+	if s := logSampler.Load(); s != nil {
+		return s.(*sampler)
+	}
+	return nil
+}
+
+func initSampler() {
+	if *logRateLimit > 0 {
+		rate := int64(*logRateLimit)
+		logSampler.Store(newSampler(rate, rate))
+	}
+}
+
 func init() {
 	// Register stderr first: that way if we crash during file-writing at least
 	// the log will have gone somewhere.
@@ -207,11 +223,13 @@ func init() {
 	}
 	TextSinks = append(TextSinks, &sinks.file)
 
-	// Initialize per-severity rings
-	for i := 0; i < numSeverity; i++ {
-		sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
+		// Initialize per-severity rings
+		for i := 0; i < numSeverity; i++ {
+			sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
+		}
+
+		initSampler()
 	}
-}
 
 // stderrSink is a TextSink that writes log entries to stderr
 // if they meet certain conditions.

@@ -214,6 +214,14 @@ func textPrintf(m *LogsinkMeta, textSinks []TextSink, format string, args ...any
 		return 0, nil // No TextSinks specified; don't bother formatting.
 	}
 
+	// Check rate limiter for Debug/Info/Warning only (Error/Fatal bypass)
+	if s := getSampler(); s != nil {
+		if !s.allowSeverity(m.Severity) {
+			atomic.AddInt64(&Stats.Dropped.lines, 1)
+			return 0, nil
+		}
+	}
+
 	bufi := bufs.Get()
 	var buf *bytes.Buffer
 	if bufi == nil {
