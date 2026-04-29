@@ -10,6 +10,8 @@ import (
 
 type textEncoder struct{}
 
+func (e *textEncoder) Clone() Encoder { return e }
+
 func (e *textEncoder) EncodeEntry(entry *Entry) []byte {
 	bp := getEncBuf()
 	buf := *bp

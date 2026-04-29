@@ -69,3 +69,20 @@ func BenchmarkEntryPool(b *testing.B) {
 		putEntry(e)
 	}
 }
+
+func BenchmarkStructuredInfo(b *testing.B) {
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := getEntry()
+		e.Severity = Severity_Info
+		e.Time = time.Now().UnixNano()
+		e.Message = "benchmark message"
+		e.File = "bench_test.go"
+		e.Line = 42
+		e.Funcname = "BenchmarkStructuredInfo"
+		e.Thread = 12345
+		e.Fields = append(e.Fields[:0], Int("status", 200), String("method", "GET"))
+		putEntry(e)
+	}
+}

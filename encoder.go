@@ -7,6 +7,7 @@ import (
 // Encoder serializes an Entry into a byte slice.
 type Encoder interface {
 	EncodeEntry(entry *Entry) []byte
+	Clone() Encoder
 }
 
 // encoderHolder wraps the active Encoder with a mutex for thread-safe swapping.

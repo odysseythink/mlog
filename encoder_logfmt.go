@@ -10,6 +10,8 @@ import (
 
 type logfmtEncoder struct{}
 
+func (e *logfmtEncoder) Clone() Encoder { return e }
+
 func (e *logfmtEncoder) EncodeEntry(entry *Entry) []byte {
 	bp := getEncBuf()
 	buf := *bp

@@ -10,6 +10,8 @@ import (
 
 type jsonEncoder struct{}
 
+func (e *jsonEncoder) Clone() Encoder { return e }
+
 func (e *jsonEncoder) EncodeEntry(entry *Entry) []byte {
 	bp := getEncBuf()
 	buf := *bp
