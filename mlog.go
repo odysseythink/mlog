@@ -128,6 +128,7 @@ func (s *OutputStats) Bytes() int64 {
 // per severity level. Values must be read with atomic.LoadInt64.
 var Stats struct {
 	Debug, Info, Warning, Error OutputStats
+	Dropped                     OutputStats
 }
 
 var severityStats = [...]*OutputStats{
@@ -706,13 +707,13 @@ func ctxfatalf(ctx context.Context, depth int, format string, args ...any) {
 }
 
 func flushAndAbort() {
-	sinks.file.Flush()
+	Close()
 
 	err := abortProcess() // Should not return.
 
 	// Failed to abort the process using signals.  Dump a stack trace and exit.
 	Errorf("abortProcess returned unexpectedly: %v", err)
-	sinks.file.Flush()
+	Close()
 	pprof.Lookup("goroutine").WriteTo(os.Stderr, 1)
 	os.Exit(2) // Exit with the same code as the default SIGABRT handler.
 }
@@ -779,7 +780,7 @@ func FatalContextDepthf(ctx context.Context, depth int, format string, args ...a
 
 func ctxexitf(ctx context.Context, depth int, format string, args ...any) {
 	ctxlogf(ctx, depth+1, Severity_Fatal, false, noStack, format, args...)
-	sinks.file.Flush()
+	Close()
 	os.Exit(1)
 }
 

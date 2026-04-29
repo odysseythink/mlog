@@ -347,6 +347,11 @@ var (
 	stderrThreshold severityFlag // The -stderrthreshold flag.
 )
 
+var (
+	ringSizeFlag  = flag.Int("log_ring_size", defaultRingSize, "Size of the async log ring buffer per severity (power of 2)")
+	batchSizeFlag = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
+)
+
 // verboseEnabled returns whether the caller at the given depth should emit
 // verbose logs at the given level, with depth 0 identifying the caller of
 // verboseEnabled.

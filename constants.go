@@ -17,6 +17,14 @@ const (
 	flushInterval = 30 * time.Second
 
 	footer = "\nCONTINUED IN NEXT FILE\n"
+
+	defaultEntryBufSize = 512  // Pre-allocated buffer size for log entries, covers header + average message
+	maxPooledEntryBuf   = 8192 // Discard buffers above this size to prevent slab bloat
+
+	defaultRingSize       = 4096              // Must be power of 2 for bitwise modulo
+	defaultBatchSize      = 64
+	periodicFlushInterval = 30 * time.Second
+	bufioHighWaterMark    = 192 * 1024 // 75% of 256KB buffer
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements
