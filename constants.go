@@ -17,6 +17,9 @@ const (
 	flushInterval = 30 * time.Second
 
 	footer = "\nCONTINUED IN NEXT FILE\n"
+
+	defaultEntryBufSize = 512  // Pre-allocated buffer size for log entries, covers header + average message
+	maxPooledEntryBuf   = 8192 // Discard buffers above this size to prevent slab bloat
 )
 
 // severity identifies the sort of log: info, warning etc. It also implements

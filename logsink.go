@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -159,6 +160,38 @@ type TextSink interface {
 
 // bufs is a pool of *bytes.Buffer used in formatting log entries.
 var bufs sync.Pool // Pool of *bytes.Buffer.
+
+// logEntry is a pooled container for a formatted log entry and its metadata.
+type logEntry struct {
+	data   []byte
+	meta   *LogsinkMeta
+	ack    chan struct{} // For ERROR/FATAL: optional ack channel. nil for INFO/WARNING.
+	refCnt atomic.Int32  // = number of rings this entry was pushed to
+}
+
+// entryBufPool holds pre-allocated []byte buffers to reduce allocations on the hot path.
+var entryBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, defaultEntryBufSize)
+		return &b
+	},
+}
+
+// logEntryPool holds reusable logEntry structs.
+var logEntryPool = sync.Pool{
+	New: func() any {
+		return &logEntry{}
+	},
+}
+
+// putEntryBuf returns a []byte buffer to the pool, discarding oversized buffers.
+func putEntryBuf(p *[]byte) {
+	if cap(*p) > maxPooledEntryBuf {
+		return // let GC reclaim oversized buffers
+	}
+	*p = (*p)[:0]
+	entryBufPool.Put(p)
+}
 
 // textPrintf formats a text log entry and emits it to all specified TextSink sinks.
 //
