@@ -31,6 +31,9 @@ func putEntry(e *Entry) {
 	e.Severity = 0
 	e.Time = 0
 	e.Message = ""
+	for i := range e.Fields {
+		e.Fields[i] = Field{}
+	}
 	e.Fields = e.Fields[:0]
 	e.File = ""
 	e.Line = 0

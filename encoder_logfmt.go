@@ -58,6 +58,12 @@ func appendLogfmtString(buf []byte, s string) []byte {
 				buf = append(buf, '\\', '"')
 			case '\\':
 				buf = append(buf, '\\', '\\')
+			case '\n':
+				buf = append(buf, '\\', 'n')
+			case '\r':
+				buf = append(buf, '\\', 'r')
+			case '\t':
+				buf = append(buf, '\\', 't')
 			default:
 				buf = append(buf, s[i])
 			}

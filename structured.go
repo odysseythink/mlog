@@ -135,8 +135,17 @@ func structuredEmit(entry *Entry, sev Severity) {
 		if !fss.rings[s].tryPush(le) {
 			dropped = true
 			fss.rings[s].dropped.Add(1)
+			if le.refCnt.Add(-1) == 0 {
+				putEntry(le.entry)
+				le.entry = nil
+				le.data = nil
+				le.meta = nil
+				le.ack = nil
+				logEntryPool.Put(le)
+			}
+		} else {
+			fss.writers[s].wake()
 		}
-		fss.writers[s].wake()
 	}
 
 	if dropped {

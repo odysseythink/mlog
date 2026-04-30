@@ -48,9 +48,8 @@ func (e *jsonEncoder) EncodeEntry(entry *Entry) []byte {
 	// fields
 	for _, f := range entry.Fields {
 		buf = append(buf, ',')
-		buf = append(buf, '"')
-		buf = append(buf, f.Key...)
-		buf = append(buf, '"', ':')
+		buf = appendJSONString(buf, f.Key)
+		buf = append(buf, ':')
 		buf = appendFieldJSONVal(buf, f)
 	}
 
