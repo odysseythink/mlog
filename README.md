@@ -287,4 +287,4 @@ Apple M4 Pro 上的 benchmark 结果：
 
 ## 许可证
 
-[添加许可证信息]
+MIT License，详见 [LICENSE](LICENSE)。
