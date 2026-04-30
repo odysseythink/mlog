@@ -84,6 +84,12 @@ func TestFatalMessage(t *testing.T) {
 }
 
 func BenchmarkStructuredSink(b *testing.B) {
+	// Replace global TextSinks to avoid writing to real files (fileSinkSet
+	// uses O_EXCL which fails when the same-second filename already exists).
+	originalTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = originalTextSinks }()
+	mlog.TextSinks = nil
+
 	// Reset mlog.StructuredSinks at the end of the benchmark.
 	// Each benchmark case will clear it and insert its own test sink.
 	originalSinks := mlog.StructuredSinks
