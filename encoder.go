@@ -70,4 +70,13 @@ func putEncBuf(p *[]byte) {
 	encBufPool.Put(p)
 }
 
+// NewTextEncoder returns the default text encoder (backward-compatible format + key=value fields).
+func NewTextEncoder() Encoder { return &textEncoder{} }
+
+// NewJSONEncoder returns an encoder that outputs JSON Lines.
+func NewJSONEncoder() Encoder { return &jsonEncoder{} }
+
+// NewLogfmtEncoder returns an encoder that outputs logfmt.
+func NewLogfmtEncoder() Encoder { return &logfmtEncoder{} }
+
 var defaultTextEncoder = &textEncoder{}
