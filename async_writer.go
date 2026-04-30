@@ -61,6 +61,10 @@ func (bw *batchWriter) writeBatch(entries []*logEntry, n int) error {
 			if entry.ack != nil {
 				bw.pendingAck = append(bw.pendingAck, entry.ack)
 			}
+			entry.data = nil
+			entry.entry = nil
+			entry.meta = nil
+			entry.ack = nil
 			logEntryPool.Put(entry)
 		}
 		bw.stats.written.Add(1)

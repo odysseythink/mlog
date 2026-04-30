@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type jsonEncoder struct{}
@@ -43,17 +44,14 @@ func (e *jsonEncoder) EncodeEntry(entry *Entry) []byte {
 	// msg
 	buf = append(buf, `"msg":`...)
 	buf = appendJSONString(buf, entry.Message)
-	buf = append(buf, ',')
 
 	// fields
-	for i, f := range entry.Fields {
+	for _, f := range entry.Fields {
+		buf = append(buf, ',')
 		buf = append(buf, '"')
 		buf = append(buf, f.Key...)
 		buf = append(buf, '"', ':')
 		buf = appendFieldJSONVal(buf, f)
-		if i < len(entry.Fields)-1 {
-			buf = append(buf, ',')
-		}
 	}
 
 	buf = append(buf, '}', '\n')
@@ -74,8 +72,17 @@ func appendJSONString(buf []byte, s string) []byte {
 			buf = append(buf, '\\', 'n')
 		case '\t':
 			buf = append(buf, '\\', 't')
+		case '\r':
+			buf = append(buf, '\\', 'r')
 		default:
-			buf = append(buf, string(c)...)
+			if c < 0x20 {
+				const hex = "0123456789abcdef"
+				buf = append(buf, '\\', 'u', '0', '0', hex[c>>4], hex[c&0xf])
+			} else {
+				var runeBuf [4]byte
+				n := utf8.EncodeRune(runeBuf[:], c)
+				buf = append(buf, runeBuf[:n]...)
+			}
 		}
 	}
 	buf = append(buf, '"')

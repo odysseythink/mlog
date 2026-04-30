@@ -52,7 +52,16 @@ func appendLogfmtString(buf []byte, s string) []byte {
 	needsQuote := strings.ContainsAny(s, " \t\n\r\"=")
 	if needsQuote {
 		buf = append(buf, '"')
-		buf = append(buf, s...)
+		for i := 0; i < len(s); i++ {
+			switch s[i] {
+			case '"':
+				buf = append(buf, '\\', '"')
+			case '\\':
+				buf = append(buf, '\\', '\\')
+			default:
+				buf = append(buf, s[i])
+			}
+		}
 		buf = append(buf, '"')
 		return buf
 	}

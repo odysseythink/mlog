@@ -1,6 +1,8 @@
 package mlog
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +70,37 @@ func TestTextEncoderWithFields(t *testing.T) {
 	}
 }
 
+func TestTextEncoderAllFieldTypes(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(), Message: "all types",
+		File: "main.go", Line: 1, Funcname: "github.com/odysseythink/mlog.main",
+		Fields: []Field{
+			Float64("ratio", 2.5), Bool("flag", false),
+			Duration("elapsed", 3*time.Second), Err(errors.New("oops")),
+			Any("data", 42), {Key: "unknown", Type: 99},
+		},
+	}
+	enc := &textEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	s := string(out)
+	if !strings.Contains(s, "ratio=2.5") {
+		t.Fatalf("float64: %s", s)
+	}
+	if !strings.Contains(s, "flag=false") {
+		t.Fatalf("bool false: %s", s)
+	}
+	if !strings.Contains(s, "elapsed=3s") {
+		t.Fatalf("duration: %s", s)
+	}
+	if !strings.Contains(s, "error=oops") {
+		t.Fatalf("err non-nil: %s", s)
+	}
+	if !strings.Contains(s, "mlog.main:1") {
+		t.Fatalf("funcname trim: %s", s)
+	}
+}
+
 func TestJSONEncoderWithFields(t *testing.T) {
 	now := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
 	e := &Entry{
@@ -104,6 +137,84 @@ func TestJSONEncoderWithFields(t *testing.T) {
 	if !strings.HasPrefix(s, "{") || !strings.Contains(s, "}\n") {
 		t.Fatalf("not JSON object: %s", s)
 	}
+	if !json.Valid(out[:len(out)-1]) {
+		t.Fatalf("invalid JSON: %s", s)
+	}
+}
+
+func TestJSONEncoderAllFieldTypes(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "all", File: "main.go", Line: 1,
+		Fields: []Field{
+			Bool("flag", false), Duration("dur", 5*time.Second),
+			Err(errors.New("fail")), Err(nil), Any("data", "hi"),
+			{Key: "unknown", Type: 99},
+		},
+	}
+	enc := &jsonEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	s := string(out)
+	if !strings.Contains(s, `"flag":false`) {
+		t.Fatalf("bool false: %s", s)
+	}
+	if !strings.Contains(s, `"error":"fail"`) {
+		t.Fatalf("err non-nil: %s", s)
+	}
+	if !strings.Contains(s, `"unknown":null`) {
+		t.Fatalf("unknown: %s", s)
+	}
+	if !json.Valid(out[:len(out)-1]) {
+		t.Fatalf("invalid JSON: %s", s)
+	}
+}
+
+func TestJSONEncoderSpecialChars(t *testing.T) {
+	cases := []string{
+		`has "quotes" and \backslash\`,
+		"line1\rline2",
+		"tab\there",
+		"bell\x07ring",
+	}
+	for _, msg := range cases {
+		e := &Entry{
+			Severity: Severity_Info, Time: time.Now().UnixNano(),
+			Message: msg, File: "main.go", Line: 1,
+		}
+		enc := &jsonEncoder{}
+		out := enc.EncodeEntry(e)
+		if !json.Valid(out[:len(out)-1]) {
+			t.Fatalf("invalid JSON for message %q: %s", msg, out)
+		}
+		putEncBuf(&out)
+	}
+}
+
+func TestJSONEncoderFileWithSlash(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "x", File: "/some/path/to/main.go", Line: 10,
+	}
+	enc := &jsonEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), `"caller":"main.go:10"`) {
+		t.Fatalf("caller: %s", string(out))
+	}
+}
+
+func TestJSONEncoderNoFields(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "plain", File: "main.go", Line: 1,
+	}
+	enc := &jsonEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !json.Valid(out[:len(out)-1]) {
+		t.Fatalf("invalid JSON: %s", string(out))
+	}
 }
 
 func TestLogfmtEncoderWithFields(t *testing.T) {
@@ -133,5 +244,69 @@ func TestLogfmtEncoderWithFields(t *testing.T) {
 	}
 	if !strings.Contains(s, "name=test") {
 		t.Fatalf("missing string field in: %s", s)
+	}
+}
+
+func TestLogfmtEncoderAllFieldTypes(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "hello world", File: "main.go", Line: 1,
+		Fields: []Field{
+			Float64("ratio", 1.5), Bool("ok", true), Bool("fail", false),
+			Duration("dur", 100*time.Millisecond), Err(errors.New("bad")),
+			Any("stuff", 42), {Key: "unknown", Type: 99},
+		},
+	}
+	enc := &logfmtEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	s := string(out)
+	if !strings.Contains(s, "ratio=1.5") {
+		t.Fatalf("float64: %s", s)
+	}
+	if !strings.Contains(s, "ok=true") {
+		t.Fatalf("bool true: %s", s)
+	}
+	if !strings.Contains(s, "fail=false") {
+		t.Fatalf("bool false: %s", s)
+	}
+	if !strings.Contains(s, "dur=100ms") {
+		t.Fatalf("duration: %s", s)
+	}
+}
+
+func TestLogfmtEncoderMessageQuoting(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "hello world", File: "main.go", Line: 1,
+	}
+	enc := &logfmtEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), `msg="hello world"`) {
+		t.Fatalf("not quoted: %s", string(out))
+	}
+}
+
+func TestLogfmtEncoderStringWithQuotes(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "test", File: "main.go", Line: 1,
+		Fields: []Field{String("msg", `has "quotes" inside`)},
+	}
+	enc := &logfmtEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	s := string(out)
+	if !strings.Contains(s, `msg="has \"quotes\" inside"`) {
+		t.Fatalf("quotes not escaped: %s", s)
+	}
+}
+
+func TestEncoderClone(t *testing.T) {
+	for _, enc := range []Encoder{&textEncoder{}, &jsonEncoder{}, &logfmtEncoder{}} {
+		if enc.Clone() == nil {
+			t.Fatalf("Clone nil for %T", enc)
+		}
 	}
 }
