@@ -42,15 +42,15 @@ func TestThreadPadding(t *testing.T) {
 		want []byte
 	}{
 		// Integers that encode as fewer than 7 ASCII characters are padded, the
-		// rest is not; see nDigits().
-		{want: []byte("         "), n: 0}, // nDigits does not support 0 (I presume for speed reasons).
-		{want: []byte("       1 "), n: 1},
-		{want: []byte("  912389 "), n: 912389},
-		{want: []byte(" 2147483648 "), n: math.MaxInt32 + 1},
-		{want: []byte(" 9223372036854775806 "), n: math.MaxInt64 - 1},
-		{want: []byte(" 9223372036854775808 "), n: math.MaxInt64 + 1},   // Test int64 overflow.
-		{want: []byte(" 9223372036854775817 "), n: math.MaxInt64 + 10},  // Test int64 overflow.
-		{want: []byte(" 18446744073709551614 "), n: math.MaxUint64 - 1}, // Test int64 overflow.
+		// rest is not; see nDigits(). Format is [nDigits(7, thread)].
+		{want: []byte("[       ]"), n: 0}, // nDigits does not support 0 (I presume for speed reasons).
+		{want: []byte("[      1]"), n: 1},
+		{want: []byte("[ 912389]"), n: 912389},
+		{want: []byte("[2147483648]"), n: math.MaxInt32 + 1},
+		{want: []byte("[9223372036854775806]"), n: math.MaxInt64 - 1},
+		{want: []byte("[9223372036854775808]"), n: math.MaxInt64 + 1},   // Test int64 overflow.
+		{want: []byte("[9223372036854775817]"), n: math.MaxInt64 + 10},  // Test int64 overflow.
+		{want: []byte("[18446744073709551614]"), n: math.MaxUint64 - 1}, // Test int64 overflow.
 	} {
 		meta.Thread = int64(tc.n)
 		mlog.LogsinkPrintf(meta, "%v", msg)

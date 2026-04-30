@@ -26,7 +26,7 @@ func TestCallerText(t *testing.T) {
 
 	wantRE := regexp.MustCompile(fmt.Sprintf(
 		`^goroutine \d+ \[running\]:
-github.com/odysseythink/mlog/stackdump_test\.TestCallerText(\([^)]*\))?
+github.com/odysseythink/mlog_test\.TestCallerText(\([^)]*\))?
 	%v:%v.*
 `, file, line))
 	if !wantRE.Match(stack) {
@@ -69,13 +69,13 @@ func TestCallerTextSkip(t *testing.T) {
 			fmt.Fprintf(wantREBuf, "\n|$")
 		} else {
 			for n := tc.callerAtFrames; n > 0; n-- {
-				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog/stackdump_test\.callerAt(\([^)]*\))?
+				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog_test\.callerAt(\([^)]*\))?
 	%v:\d+.*
 `, file)
 			}
 
 			if tc.depth <= calls {
-				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog/stackdump_test\.TestCallerTextSkip(\([^)]*\))?
+				fmt.Fprintf(wantREBuf, `github.com/odysseythink/mlog_test\.TestCallerTextSkip(\([^)]*\))?
 	%v:\d+.*
 `, file)
 			}
@@ -123,10 +123,10 @@ func TestCallerPC(t *testing.T) {
 
 		wantFuncs := []string{}
 		for n := tc.pcAtFrames; n > 0; n-- {
-			wantFuncs = append(wantFuncs, `github.com/odysseythink/mlog/stackdump_test\.pcAt$`)
+			wantFuncs = append(wantFuncs, `github.com/odysseythink/mlog_test\.pcAt$`)
 		}
 		if tc.depth <= calls {
-			wantFuncs = append(wantFuncs, `^github.com/odysseythink/mlog/stackdump_test\.TestCallerPC$`)
+			wantFuncs = append(wantFuncs, `^github.com/odysseythink/mlog_test\.TestCallerPC$`)
 		}
 
 		gotFuncs := []string{}
