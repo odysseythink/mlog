@@ -3,6 +3,7 @@ package mlog
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -135,5 +136,101 @@ func TestRingBufferConcurrentProducers(t *testing.T) {
 	total := <-drained
 	if total != totalExpected {
 		t.Fatalf("drained %d entries, expected %d", total, totalExpected)
+	}
+}
+
+func TestRingBufferCapacityRounding(t *testing.T) {
+	tests := []struct {
+		input    int
+		expected uint64
+	}{
+		{5, 8},
+		{1, 1},
+		{17, 32},
+	}
+	for _, tt := range tests {
+		rb := newRingBuffer(tt.input)
+		if rb.cap != tt.expected {
+			t.Errorf("newRingBuffer(%d) cap = %d, want %d", tt.input, rb.cap, tt.expected)
+		}
+	}
+}
+
+func TestRingBufferDrainEmpty(t *testing.T) {
+	rb := newRingBuffer(8)
+	var batch [4]*logEntry
+	n := rb.drainBatch(batch[:], 4)
+	if n != 0 {
+		t.Fatalf("drainBatch on empty buffer returned %d, want 0", n)
+	}
+}
+
+func TestRingBufferDrainMaxBatchZero(t *testing.T) {
+	rb := newRingBuffer(8)
+	rb.tryPush(&logEntry{data: []byte("x")})
+	var batch [4]*logEntry
+	n := rb.drainBatch(batch[:], 0)
+	if n != 0 {
+		t.Fatalf("drainBatch with maxBatch=0 returned %d, want 0", n)
+	}
+}
+
+func TestRingBufferDrainSpinWaitTimeout(t *testing.T) {
+	rb := newRingBuffer(8)
+	// Simulate a slow publisher: writePos advanced but slot seq not published
+	rb.writePos.Store(1)
+	var batch [4]*logEntry
+	n := rb.drainBatch(batch[:], 4)
+	if n != 0 {
+		t.Fatalf("drainBatch with slow publisher returned %d, want 0", n)
+	}
+}
+
+func TestRingBufferDrainSeqGreaterThanExpected(t *testing.T) {
+	rb := newRingBuffer(8)
+	// Directly set slot seq to a very high value (greater than expected)
+	rb.slots[0].seq.Store(100)
+	// readPos is 0, expected = 1, but seq = 100 > 1
+	var batch [4]*logEntry
+	n := rb.drainBatch(batch[:], 4)
+	if n != 0 {
+		t.Fatalf("drainBatch with seq > expected returned %d, want 0", n)
+	}
+}
+
+func TestRingBufferLen(t *testing.T) {
+	rb := newRingBuffer(8)
+	if rb.len() != 0 {
+		t.Fatalf("len() on empty buffer = %d, want 0", rb.len())
+	}
+	rb.tryPush(&logEntry{data: []byte("a")})
+	rb.tryPush(&logEntry{data: []byte("b")})
+	if rb.len() != 2 {
+		t.Fatalf("len() after 2 pushes = %d, want 2", rb.len())
+	}
+	var batch [4]*logEntry
+	rb.drainBatch(batch[:], 1)
+	if rb.len() != 1 {
+		t.Fatalf("len() after draining 1 = %d, want 1", rb.len())
+	}
+	rb.drainBatch(batch[:], 4)
+	if rb.len() != 0 {
+		t.Fatalf("len() after draining all = %d, want 0", rb.len())
+	}
+}
+
+func TestSpinWaitSeqTimeout(t *testing.T) {
+	var seq atomic.Uint64
+	seq.Store(0)
+	if spinWaitSeq(&seq, 1, 1) {
+		t.Fatal("spinWaitSeq should return false when seq never reaches expected")
+	}
+}
+
+func TestSpinWaitSeqImmediate(t *testing.T) {
+	var seq atomic.Uint64
+	seq.Store(42)
+	if !spinWaitSeq(&seq, 42, 64) {
+		t.Fatal("spinWaitSeq should return true immediately when seq equals expected")
 	}
 }

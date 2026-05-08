@@ -365,3 +365,31 @@ func TestEncoderClone(t *testing.T) {
 		}
 	}
 }
+
+func TestNewJSONEncoder(t *testing.T) {
+	enc := NewJSONEncoder()
+	if enc == nil {
+		t.Fatal("NewJSONEncoder() returned nil")
+	}
+	now := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	e := &Entry{Severity: Severity_Info, Time: now.UnixNano(), Message: "test", File: "test.go", Line: 1}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), `"msg":"test"`) {
+		t.Fatalf("NewJSONEncoder output missing msg: %s", out)
+	}
+}
+
+func TestNewLogfmtEncoder(t *testing.T) {
+	enc := NewLogfmtEncoder()
+	if enc == nil {
+		t.Fatal("NewLogfmtEncoder() returned nil")
+	}
+	now := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	e := &Entry{Severity: Severity_Info, Time: now.UnixNano(), Message: "test", File: "test.go", Line: 1}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), `msg=test`) {
+		t.Fatalf("NewLogfmtEncoder output missing msg: %s", out)
+	}
+}

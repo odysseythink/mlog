@@ -150,3 +150,24 @@ func TestCallerPC(t *testing.T) {
 		}
 	}
 }
+
+func TestStackString(t *testing.T) {
+	s := mlog.Stack{Text: []byte("test stack")}
+	if s.String() != "test stack" {
+		t.Errorf("Stack.String() = %q, want %q", s.String(), "test stack")
+	}
+}
+
+func TestStackdumpCaller(t *testing.T) {
+	stack := mlog.StackdumpCaller(0)
+	if len(stack.Text) == 0 {
+		t.Error("StackdumpCaller(0) returned empty Text")
+	}
+	if len(stack.PC) == 0 {
+		t.Error("StackdumpCaller(0) returned empty PC")
+	}
+	// Should contain this function name.
+	if !bytes.Contains(stack.Text, []byte("TestStackdumpCaller")) {
+		t.Errorf("StackdumpCaller(0) text does not contain TestStackdumpCaller: %s", stack.Text)
+	}
+}

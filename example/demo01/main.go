@@ -1,49 +1,40 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"time"
 
-func SearchV1(val string) string {
-	if val == "" {
-		return ""
-	}
-
-	rbstrs := []string{}
-	for iLoop := 0; iLoop < len(val); iLoop++ {
-		for jLoop := iLoop + 1; jLoop < len(val); jLoop++ {
-			if byte(val[jLoop]) == byte(val[iLoop]) {
-				rbstrs = append(rbstrs, val[iLoop:jLoop+1])
-			}
-		}
-	}
-	fmt.Println("------", rbstrs)
-	maxlen := 0
-	maxidx := -1
-	for idx, v := range rbstrs {
-		if len(v) >= 3 {
-			fmt.Println("1111--", v)
-			notmatch := false
-			for iLoop := 1; iLoop < len(v)-1; iLoop++ {
-				fmt.Println(" 111--", string(v[iLoop]), ",first=", string(v[0]))
-				if v[iLoop] == v[0] {
-					notmatch = true
-					break
-				}
-			}
-			if notmatch {
-				continue
-			}
-		}
-		if len(v) >= maxlen {
-			maxlen = len(v)
-			maxidx = idx
-		}
-	}
-	if maxidx >= 0 {
-		return rbstrs[maxidx]
-	}
-	return ""
-}
+	"github.com/odysseythink/mlog"
+)
 
 func main() {
-	fmt.Println(SearchV1("beaeb"))
+	defer mlog.Flush()
+
+	logDir := "/tmp/mlog_demo"
+	os.MkdirAll(logDir, 0755)
+	mlog.SetLogDir(logDir)
+
+	fmt.Println("=== 当前模式日志输出 ===")
+	fmt.Println()
+
+	mlog.Info("服务启动完成")
+	time.Sleep(100 * time.Millisecond)
+	mlog.Infof("监听端口: %d", 8080)
+	time.Sleep(100 * time.Millisecond)
+	mlog.Info("请求处理完成",
+		mlog.String("method", "GET"),
+		mlog.String("path", "/api/users"),
+		mlog.Int("status", 200),
+	)
+
+	logger := mlog.With(
+		mlog.String("service", "user-api"),
+		mlog.String("version", "1.0.0"),
+	)
+	time.Sleep(100 * time.Millisecond)
+	logger.Info("用户登录", mlog.String("user_id", "abc123"))
+
+	fmt.Println()
+	fmt.Println("日志文件位置:", logDir)
 }

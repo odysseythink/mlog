@@ -2,10 +2,12 @@ package mlog_test
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,6 +249,325 @@ type stringStructuredSinkWantStack struct{}
 func (s stringStructuredSinkWantStack) WantStack(_ *mlog.LogsinkMeta) bool { return true }
 func (s stringStructuredSinkWantStack) Printf(meta *mlog.LogsinkMeta, format string, a ...any) (n int, err error) {
 	return len(meta.Stack.String()), nil
+}
+
+func TestParseSeverity(t *testing.T) {
+	tests := []struct {
+		name    string
+		want    mlog.Severity
+		wantErr bool
+	}{
+		{"INFO", mlog.Severity_Info, false},
+		{"info", mlog.Severity_Info, false},
+		{"Info", mlog.Severity_Info, false},
+		{"WARNING", mlog.Severity_Warning, false},
+		{"ERROR", mlog.Severity_Error, false},
+		{"FATAL", mlog.Severity_Fatal, false},
+		{"DEBUG", mlog.Severity(0), true},
+		{"INVALID", mlog.Severity(0), true},
+		{"", mlog.Severity(0), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := mlog.ParseSeverity(tc.name)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("ParseSeverity(%q) expected error", tc.name)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseSeverity(%q) unexpected error: %v", tc.name, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseSeverity(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSeverityString(t *testing.T) {
+	tests := []struct {
+		sev  mlog.Severity
+		want string
+	}{
+		{mlog.Severity_Debug, "DEBUG"},
+		{mlog.Severity_Info, "INFO"},
+		{mlog.Severity_Warning, "WARNING"},
+		{mlog.Severity_Error, "ERROR"},
+		{mlog.Severity_Fatal, "FATAL"},
+		{mlog.Severity(99), "mlog.Severity(99)"},
+	}
+	for _, tc := range tests {
+		got := tc.sev.String()
+		if got != tc.want {
+			t.Fatalf("Severity(%d).String() = %q, want %q", tc.sev, got, tc.want)
+		}
+	}
+}
+
+func TestLogsinkPrintfNoEnabledSinks(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	origStructuredSinks := mlog.StructuredSinks
+	mlog.TextSinks = []mlog.TextSink{&fakeTextSink{enabled: false}}
+	mlog.StructuredSinks = nil
+	defer func() {
+		mlog.TextSinks = origTextSinks
+		mlog.StructuredSinks = origStructuredSinks
+	}()
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	n, err := mlog.LogsinkPrintf(meta, "hello")
+	if err != nil {
+		t.Fatalf("LogsinkPrintf() unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("LogsinkPrintf() n = %d, want 0", n)
+	}
+}
+
+func TestLogsinkPrintfMaxMessageLen(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = origTextSinks }()
+	sink := &fakeTextSink{enabled: true}
+	mlog.TextSinks = []mlog.TextSink{sink}
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	longMsg := strings.Repeat("x", mlog.MaxLogMessageLen)
+	mlog.LogsinkPrintf(meta, "%s", longMsg)
+
+	if len(sink.gotBytes) != mlog.MaxLogMessageLen {
+		t.Fatalf("expected %d bytes, got %d", mlog.MaxLogMessageLen, len(sink.gotBytes))
+	}
+	if sink.gotBytes[len(sink.gotBytes)-1] != '\n' {
+		t.Fatalf("expected trailing newline")
+	}
+}
+
+func TestLogsinkPrintfNoTrailingNewline(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = origTextSinks }()
+	sink := &fakeTextSink{enabled: true}
+	mlog.TextSinks = []mlog.TextSink{sink}
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	mlog.LogsinkPrintf(meta, "hello")
+	if !bytes.HasSuffix(sink.gotBytes, []byte("hello\n")) {
+		t.Fatalf("expected auto-appended newline, got %q", sink.gotBytes)
+	}
+}
+
+func TestLogsinkPrintfMultipleSinks(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	sinks := make([]*fakeTextSink, 4)
+	textSinks := make([]mlog.TextSink, 4)
+	for i := range sinks {
+		sinks[i] = &fakeTextSink{enabled: true}
+		textSinks[i] = sinks[i]
+	}
+	mlog.TextSinks = textSinks
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	mlog.LogsinkPrintf(meta, "multi")
+
+	for i, s := range sinks {
+		if s.calls != 1 {
+			t.Fatalf("sink %d calls = %d, want 1", i, s.calls)
+		}
+		if !bytes.Contains(s.gotBytes, []byte("multi")) {
+			t.Fatalf("sink %d did not receive message", i)
+		}
+	}
+}
+
+func TestLogsinkPrintfSinkError(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	wantErr := errors.New("sink error")
+	sink := &fakeTextSink{enabled: true, err: wantErr}
+	mlog.TextSinks = []mlog.TextSink{sink}
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	_, err := mlog.LogsinkPrintf(meta, "hello")
+	if err != wantErr {
+		t.Fatalf("LogsinkPrintf() err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestLogsinkPrintfSinkByteCount(t *testing.T) {
+	origTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	sink1 := &fakeTextSink{enabled: true, byteCount: 10}
+	sink2 := &fakeTextSink{enabled: true, byteCount: 25}
+	sink3 := &fakeTextSink{enabled: true, byteCount: 15}
+	mlog.TextSinks = []mlog.TextSink{sink1, sink2, sink3}
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	n, err := mlog.LogsinkPrintf(meta, "hello")
+	if err != nil {
+		t.Fatalf("LogsinkPrintf() unexpected error: %v", err)
+	}
+	if n != 25 {
+		t.Fatalf("LogsinkPrintf() n = %d, want 25", n)
+	}
+}
+
+func TestLogsinkPrintfStackFromArgs(t *testing.T) {
+	origStructuredSinks := mlog.StructuredSinks
+	defer func() { mlog.StructuredSinks = origStructuredSinks }()
+
+	sink := &fakeStructuredSinkThatWantsStack{wantStack: true}
+	mlog.StructuredSinks = []mlog.StructuredLogsink{sink}
+
+	origTextSinks := mlog.TextSinks
+	mlog.TextSinks = nil
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	stack := mlog.Stack{Text: []byte("test stack trace")}
+	mlog.LogsinkPrintf(meta, "msg %v", stack)
+
+	if sink.gotMeta == nil {
+		t.Fatal("sink did not receive meta")
+	}
+	if sink.gotMeta.Stack == nil {
+		t.Fatal("expected Stack to be set in meta")
+	}
+	if !bytes.Equal(sink.gotMeta.Stack.Text, []byte("test stack trace")) {
+		t.Fatalf("unexpected stack text: %q", sink.gotMeta.Stack.Text)
+	}
+}
+
+func TestLogsinkPrintfStackPreserved(t *testing.T) {
+	origStructuredSinks := mlog.StructuredSinks
+	defer func() { mlog.StructuredSinks = origStructuredSinks }()
+
+	sink := &fakeStructuredSinkThatWantsStack{wantStack: true}
+	mlog.StructuredSinks = []mlog.StructuredLogsink{sink}
+
+	origTextSinks := mlog.TextSinks
+	mlog.TextSinks = nil
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	_, file, line, _ := runtime.Caller(0)
+	existingStack := mlog.Stack{Text: []byte("existing stack")}
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+		Stack:    &existingStack,
+	}
+
+	mlog.LogsinkPrintf(meta, "msg")
+
+	if sink.gotMeta == nil {
+		t.Fatal("sink did not receive meta")
+	}
+	if sink.gotMeta.Stack != &existingStack {
+		t.Fatal("expected existing Stack to be preserved")
+	}
+}
+
+func TestLogsinkPrintfStructuredSinkError(t *testing.T) {
+	origStructuredSinks := mlog.StructuredSinks
+	defer func() { mlog.StructuredSinks = origStructuredSinks }()
+
+	wantErr := errors.New("structured error")
+	sink := &fakeStructuredSink{err: wantErr}
+	mlog.StructuredSinks = []mlog.StructuredLogsink{sink}
+
+	origTextSinks := mlog.TextSinks
+	mlog.TextSinks = nil
+	defer func() { mlog.TextSinks = origTextSinks }()
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	_, err := mlog.LogsinkPrintf(meta, "msg")
+	if err != wantErr {
+		t.Fatalf("LogsinkPrintf() err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestStructuredTextWrapper(t *testing.T) {
+	sink := &fakeTextSink{enabled: true}
+	wrapper := mlog.StructuredTextWrapper{TextSinks: []mlog.TextSink{sink}}
+
+	_, file, line, _ := runtime.Caller(0)
+	meta := &mlog.LogsinkMeta{
+		Time:     time.Now(),
+		File:     file,
+		Line:     line,
+		Severity: mlog.Severity_Info,
+	}
+
+	wrapper.Printf(meta, "wrapper msg")
+
+	if sink.calls != 1 {
+		t.Fatalf("sink calls = %d, want 1", sink.calls)
+	}
+	if !bytes.Contains(sink.gotBytes, []byte("wrapper msg")) {
+		t.Fatalf("sink did not receive message: %q", sink.gotBytes)
+	}
 }
 
 type fakeTextSink struct {
