@@ -6,48 +6,67 @@ import (
 	"time"
 )
 
-// StructuredLogger provides a fluent API for structured logging.
-// Use S() to obtain the global instance, and With() to bind persistent fields.
-type StructuredLogger struct {
+// Logger provides a fluent API for structured logging.
+// Use With() to bind persistent fields.
+type Logger struct {
 	fields []Field
 }
 
-// globalStructured is the default StructuredLogger with no bound fields.
-var globalStructured = &StructuredLogger{}
+// globalLogger is the default Logger with no bound fields.
+var globalLogger = &Logger{}
 
-// S returns the global StructuredLogger.
-func S() *StructuredLogger { return globalStructured }
+// With returns a new Logger that merges the given fields with any fields
+// already bound to the global logger.
+func With(fields ...Field) *Logger {
+	return globalLogger.With(fields...)
+}
 
-// With returns a new StructuredLogger that merges the given fields with
+// With returns a new Logger that merges the given fields with
 // any fields already bound to the receiver.
-func (s *StructuredLogger) With(fields ...Field) *StructuredLogger {
-	merged := make([]Field, 0, len(s.fields)+len(fields))
-	merged = append(merged, s.fields...)
+func (l *Logger) With(fields ...Field) *Logger {
+	merged := make([]Field, 0, len(l.fields)+len(fields))
+	merged = append(merged, l.fields...)
 	merged = append(merged, fields...)
-	return &StructuredLogger{fields: merged}
+	return &Logger{fields: merged}
 }
 
 // Info logs a structured message at INFO severity.
-func (s *StructuredLogger) Info(msg string, fields ...Field) {
-	s.log(Severity_Info, msg, fields)
+func (l *Logger) Info(msg string, fields ...Field) {
+	if getMode() == LogModeStructured {
+		l.log(Severity_Info, msg, fields)
+	} else {
+		InfoDepth(1, msg)
+	}
 }
 
 // Warning logs a structured message at WARNING severity.
-func (s *StructuredLogger) Warning(msg string, fields ...Field) {
-	s.log(Severity_Warning, msg, fields)
+func (l *Logger) Warning(msg string, fields ...Field) {
+	if getMode() == LogModeStructured {
+		l.log(Severity_Warning, msg, fields)
+	} else {
+		WarningDepth(1, msg)
+	}
 }
 
 // Error logs a structured message at ERROR severity.
-func (s *StructuredLogger) Error(msg string, fields ...Field) {
-	s.log(Severity_Error, msg, fields)
+func (l *Logger) Error(msg string, fields ...Field) {
+	if getMode() == LogModeStructured {
+		l.log(Severity_Error, msg, fields)
+	} else {
+		ErrorDepth(1, msg)
+	}
 }
 
 // Fatal logs a structured message at FATAL severity.
-func (s *StructuredLogger) Fatal(msg string, fields ...Field) {
-	s.log(Severity_Fatal, msg, fields)
+func (l *Logger) Fatal(msg string, fields ...Field) {
+	if getMode() == LogModeStructured {
+		l.log(Severity_Fatal, msg, fields)
+	} else {
+		FatalDepth(1, msg)
+	}
 }
 
-func (s *StructuredLogger) log(sev Severity, msg string, fields []Field) {
+func (l *Logger) log(sev Severity, msg string, fields []Field) {
 	if sev < Severity_Debug || sev > Severity_Fatal {
 		return
 	}
@@ -67,9 +86,9 @@ func (s *StructuredLogger) log(sev Severity, msg string, fields []Field) {
 	entry.Funcname = frame.Function
 	entry.Thread = int64(pid)
 
-	totalFields := len(s.fields) + len(fields)
+	totalFields := len(l.fields) + len(fields)
 	if totalFields > 0 {
-		entry.Fields = append(entry.Fields[:0], s.fields...)
+		entry.Fields = append(entry.Fields[:0], l.fields...)
 		entry.Fields = append(entry.Fields, fields...)
 	} else {
 		entry.Fields = entry.Fields[:0]

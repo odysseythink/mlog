@@ -7,18 +7,21 @@ import (
 )
 
 func TestStructuredLogInfo(t *testing.T) {
-	S().Info("hello", String("key", "value"))
+	SetLogMode(LogModeStructured)
+	With().Info("hello", String("key", "value"))
 }
 
 func TestStructuredLogWithFields(t *testing.T) {
-	logger := S().With(String("request_id", "abc123"))
+	SetLogMode(LogModeStructured)
+	logger := With(String("request_id", "abc123"))
 	logger.Info("handling request", Int("status", 200))
 }
 
 func TestStructuredLogAllSeverities(t *testing.T) {
-	S().Info("info msg")
-	S().Warning("warning msg")
-	S().Error("error msg")
+	SetLogMode(LogModeStructured)
+	With().Info("info msg")
+	With().Warning("warning msg")
+	With().Error("error msg")
 }
 
 func TestTextEncoderIntegration(t *testing.T) {
