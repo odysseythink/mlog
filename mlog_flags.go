@@ -352,7 +352,23 @@ var (
 	batchSizeFlag   = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
 	logRateLimit    = flag.Int("log_rate_limit", 0, "Maximum log entries per second (0 = disabled)")
 	logEncoderFlag  = flag.String("log_encoder", "text", "Log encoder: text, json, logfmt")
+	logModeFlag     = flag.String("log_mode", "printf", "Log output mode: printf or structured")
 )
+
+var flagModeOnce sync.Once
+
+func initLogModeFromFlag() {
+	flagModeOnce.Do(func() {
+		if logMode.Load() == 0 {
+			switch *logModeFlag {
+			case "structured":
+				SetLogMode(LogModeStructured)
+			default:
+				// printf is default (0)
+			}
+		}
+	})
+}
 
 // verboseEnabled returns whether the caller at the given depth should emit
 // verbose logs at the given level, with depth 0 identifying the caller of

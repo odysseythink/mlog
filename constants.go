@@ -1,6 +1,10 @@
 package mlog
 
-import "time"
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+)
 
 const (
 	message = "benchmark log message"
@@ -51,3 +55,29 @@ const (
 	noStack   = stack(false)
 	withStack = stack(true)
 )
+
+// LogMode controls whether logging uses printf-style or structured output.
+type LogMode int8
+
+const (
+	LogModePrintf     LogMode = 0
+	LogModeStructured LogMode = 1
+)
+
+var (
+	logMode     atomic.Int32
+	modeSetOnce sync.Once
+)
+
+// SetLogMode sets the global log mode. It may only be called once; subsequent
+// calls are silently ignored.
+func SetLogMode(mode LogMode) {
+	modeSetOnce.Do(func() {
+		logMode.Store(int32(mode))
+	})
+}
+
+func getMode() LogMode {
+	initLogModeFromFlag()
+	return LogMode(logMode.Load())
+}
