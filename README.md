@@ -5,7 +5,7 @@ Go 结构化日志库，兼容 glog 风格 API，支持零分配热路径、可�
 ## 特性
 
 - **glog 兼容 API**：`Infof`、`Warningf`、`Errorf`、`Fatalf` 等，可直接替换 glog
-- **结构化日志**：`S().Info(msg, fields...)` 零分配热路径（~40ns/op, 0 alloc）
+- **结构化日志**：`mlog.Info(msg, fields...)` 零分配热路径（~40ns/op, 0 alloc），通过 `-log_mode=structured` 启用
 - **可插拔编码器**：text（默认）、JSON Lines、logfmt，通过 `-log_encoder` 标志切换
 - **异步写入**：基于 ring buffer 的批量异步 writer，不阻塞业务 goroutine
 - **自动轮转**：按大小自动切割日志文件，支持符号链接
@@ -55,8 +55,9 @@ import (
 func main() {
     defer mlog.Flush()
 
+    // 启动时指定 -log_mode=structured
     // 基本结构化日志
-    mlog.S().Info("请求处理完成",
+    mlog.Info("请求处理完成",
         mlog.String("method", "GET"),
         mlog.String("path", "/api/users"),
         mlog.Int("status", 200),
@@ -64,7 +65,7 @@ func main() {
     )
 
     // 绑定持久字段
-    logger := mlog.S().With(
+    logger := mlog.With(
         mlog.String("service", "user-api"),
         mlog.String("version", "1.0.0"),
     )
@@ -131,11 +132,11 @@ Fatal 变体额外输出堆栈跟踪并调用 `os.Exit(255)`。
 ### 结构化日志 API
 
 ```go
-// 获取全局 StructuredLogger
-logger := mlog.S()
+// 获取带持久字段的 logger
+logger := mlog.With(mlog.String("request_id", "abc"))
 
-// 绑定持久字段（返回新实例，不修改原对象）
-reqLogger := logger.With(mlog.String("request_id", "abc"))
+// 继续绑定更多字段（返回新实例，不修改原对象）
+reqLogger := logger.With(mlog.String("trace_id", "xyz"))
 
 // 日志输出
 logger.Info("消息", mlog.Int("key", 42))
@@ -230,6 +231,7 @@ pcs := mlog.CallerPC(0)           // 程序计数器切片
 | `-stderrthreshold` | ERROR | 输出到 stderr 的最低级别 |
 | `-log_backtrace_at` | "" | 在指定位置输出堆栈，如 `file.go:123` |
 | `-log_encoder` | text | 编码器：text、json、logfmt |
+| `-log_mode` | printf | 日志模式：printf（默认）或 structured |
 | `-log_ring_size` | 4096 | Ring buffer 大小 |
 | `-log_batch_size` | 64 | 批量写入大小 |
 | `-log_rate_limit` | 0 | 每秒日志条数限制（0=不限） |
@@ -239,7 +241,7 @@ pcs := mlog.CallerPC(0)           // 程序计数器切片
 
 ```bash
 # 编译运行
-go run example/demo01/main.go -log_dir=/tmp/mlog -log_encoder=json -v=2
+go run example/demo01/main.go -log_dir=/tmp/mlog -log_encoder=json -log_mode=structured -v=2
 
 # 仅输出到 stderr
 go run example/demo01/main.go -logtostderr
@@ -258,7 +260,7 @@ go run example/demo01/main.go -log_rate_limit=100
   │     ▼
   │   textPrintf ──► data []byte ──► logEntry ──┐
   │                                               │
-  ├── S().Info(msg, fields...)  (结构化 API)     │
+  ├── mlog.Info(msg, fields...)  (结构化 API)    │
   │     │                                        │
   │     ▼                                        ▼
   │   Entry + Fields ──► logEntry ──► Ring Buffer ──► AsyncWriter ──► File
@@ -283,7 +285,7 @@ Apple M4 Pro 上的 benchmark 结果：
 | TextEncoderEncode | 103 | 1 |
 | JSONEncoderEncode | 217 | 2 |
 
-零分配热路径：`S().Info()` 的 Entry 构建、字段合并、ring buffer 推送全程无堆分配。
+零分配热路径：`mlog.Info()` 的 Entry 构建、字段合并、ring buffer 推送全程无堆分配。
 
 ## 许可证
 
