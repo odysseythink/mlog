@@ -256,6 +256,62 @@ func infofStructured(depth int, severity Severity, format string, args ...any) {
 	globalLogger.log(severity, msg, nil)
 }
 
+func infoLnStructured(depth int, severity Severity, args ...any) {
+	msg := strings.TrimSpace(fmt.Sprintln(args...))
+	globalLogger.log(severity, msg, nil)
+}
+
+func infoContextStructured(depth int, severity Severity, ctx context.Context, args ...any) {
+	if len(args) == 0 {
+		ctxlogStructured(ctx, depth+1, severity, "", nil)
+		return
+	}
+	msg, ok := args[0].(string)
+	if !ok {
+		msg = fmt.Sprint(args[0])
+	}
+	var fields []Field
+	for _, arg := range args[1:] {
+		if f, ok := arg.(Field); ok {
+			fields = append(fields, f)
+		}
+	}
+	ctxlogStructured(ctx, depth+1, severity, msg, fields)
+}
+
+func ctxlogStructured(ctx context.Context, depth int, severity Severity, msg string, fields []Field) {
+	pcs := [1]uintptr{}
+	if runtime.Callers(depth+1, pcs[:]) < 1 {
+		return
+	}
+	frame, _ := runtime.CallersFrames(pcs[:]).Next()
+
+	entry := getEntry()
+	entry.Severity = severity
+	entry.Time = timeNow().UnixNano()
+	entry.Message = msg
+	entry.File = frame.File
+	entry.Line = frame.Line
+	entry.Funcname = frame.Function
+	entry.Thread = int64(pid)
+
+	if len(fields) > 0 {
+		entry.Fields = append(entry.Fields[:0], fields...)
+	} else {
+		entry.Fields = entry.Fields[:0]
+	}
+
+	if sampler := getSampler(); sampler != nil {
+		if !sampler.allowSeverity(severity) {
+			atomic.AddInt64(&Stats.Dropped.lines, 1)
+			putEntry(entry)
+			return
+		}
+	}
+
+	structuredEmit(entry, severity)
+}
+
 var sinkErrOnce sync.Once
 
 func sinkf(meta *LogsinkMeta, format string, args ...any) {
@@ -523,18 +579,30 @@ func Debug(args ...any) {
 // information is emitted. When depth > 0, depth frames are skipped in the call stack
 // and the final frame is treated like the original callee to Debug.
 func DebugDepth(depth int, args ...any) {
-	logf(depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Debug, args...)
+	} else {
+		logf(depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // DebugDepthf acts as DebugDepth but with format string.
 func DebugDepthf(depth int, format string, args ...any) {
-	logf(depth+1, Severity_Debug, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Debug, format, args...)
+	} else {
+		logf(depth+1, Severity_Debug, false, noStack, format, args...)
+	}
 }
 
 // Debugln logs to the DEBUG log.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Debugln(args ...any) {
-	logf(1, Severity_Debug, false, noStack, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Debug, args...)
+	} else {
+		logf(1, Severity_Debug, false, noStack, lnFormat(args), args...)
+	}
 }
 
 // Debugf logs to the DEBUG log.
@@ -550,25 +618,43 @@ func Debugf(format string, args ...any) {
 // DebugContext is like [Debug], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContext(ctx context.Context, args ...any) {
-	DebugContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Debug, ctx, args...)
+	} else {
+		DebugContextDepth(ctx, 1, args...)
+	}
 }
 
 // DebugContextf is like [Debugf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, Severity_Debug, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Debug, msg, nil)
+	} else {
+		ctxlogf(ctx, 1, Severity_Debug, false, noStack, format, args...)
+	}
 }
 
 // DebugContextDepth is like [DebugDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Debug, ctx, args...)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // DebugContextDepthf is like [DebugDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func DebugContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Debug, msg, nil)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, format, args...)
+	}
 }
 
 // Info logs to the INFO log.
@@ -587,18 +673,30 @@ func Info(args ...any) {
 // information is emitted. When depth > 0, depth frames are skipped in the call stack
 // and the final frame is treated like the original callee to Info.
 func InfoDepth(depth int, args ...any) {
-	logf(depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Info, args...)
+	} else {
+		logf(depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // InfoDepthf acts as InfoDepth but with format string.
 func InfoDepthf(depth int, format string, args ...any) {
-	logf(depth+1, Severity_Info, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Info, format, args...)
+	} else {
+		logf(depth+1, Severity_Info, false, noStack, format, args...)
+	}
 }
 
 // Infoln logs to the INFO log.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Infoln(args ...any) {
-	logf(1, Severity_Info, false, noStack, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Info, args...)
+	} else {
+		logf(1, Severity_Info, false, noStack, lnFormat(args), args...)
+	}
 }
 
 // Infof logs to the INFO log.
@@ -614,25 +712,43 @@ func Infof(format string, args ...any) {
 // InfoContext is like [Info], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContext(ctx context.Context, args ...any) {
-	InfoContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Info, ctx, args...)
+	} else {
+		InfoContextDepth(ctx, 1, args...)
+	}
 }
 
 // InfoContextf is like [Infof], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, Severity_Info, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Info, msg, nil)
+	} else {
+		ctxlogf(ctx, 1, Severity_Info, false, noStack, format, args...)
+	}
 }
 
 // InfoContextDepth is like [InfoDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Info, ctx, args...)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // InfoContextDepthf is like [InfoDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func InfoContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Info, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Info, msg, nil)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Info, false, noStack, format, args...)
+	}
 }
 
 // Warning logs to the WARNING and INFO logs.
@@ -648,19 +764,31 @@ func Warning(args ...any) {
 // WarningDepth acts as Warning but uses depth to determine which call frame to log.
 // WarningDepth(0, "msg") is the same as Warning("msg").
 func WarningDepth(depth int, args ...any) {
-	logf(depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Warning, args...)
+	} else {
+		logf(depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // WarningDepthf acts as Warningf but uses depth to determine which call frame to log.
 // WarningDepthf(0, "msg") is the same as Warningf("msg").
 func WarningDepthf(depth int, format string, args ...any) {
-	logf(depth+1, Severity_Warning, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Warning, format, args...)
+	} else {
+		logf(depth+1, Severity_Warning, false, noStack, format, args...)
+	}
 }
 
 // Warningln logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Warningln(args ...any) {
-	logf(1, Severity_Warning, false, noStack, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Warning, args...)
+	} else {
+		logf(1, Severity_Warning, false, noStack, lnFormat(args), args...)
+	}
 }
 
 // Warningf logs to the WARNING and INFO logs.
@@ -676,25 +804,43 @@ func Warningf(format string, args ...any) {
 // WarningContext is like [Warning], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContext(ctx context.Context, args ...any) {
-	WarningContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Warning, ctx, args...)
+	} else {
+		WarningContextDepth(ctx, 1, args...)
+	}
 }
 
 // WarningContextf is like [Warningf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, Severity_Warning, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Warning, msg, nil)
+	} else {
+		ctxlogf(ctx, 1, Severity_Warning, false, noStack, format, args...)
+	}
 }
 
 // WarningContextDepth is like [WarningDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Warning, ctx, args...)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // WarningContextDepthf is like [WarningDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func WarningContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Warning, msg, nil)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, format, args...)
+	}
 }
 
 // Error logs to the ERROR, WARNING, and INFO logs.
@@ -710,19 +856,31 @@ func Error(args ...any) {
 // ErrorDepth acts as Error but uses depth to determine which call frame to log.
 // ErrorDepth(0, "msg") is the same as Error("msg").
 func ErrorDepth(depth int, args ...any) {
-	logf(depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Error, args...)
+	} else {
+		logf(depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // ErrorDepthf acts as Errorf but uses depth to determine which call frame to log.
 // ErrorDepthf(0, "msg") is the same as Errorf("msg").
 func ErrorDepthf(depth int, format string, args ...any) {
-	logf(depth+1, Severity_Error, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Error, format, args...)
+	} else {
+		logf(depth+1, Severity_Error, false, noStack, format, args...)
+	}
 }
 
 // Errorln logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Errorln(args ...any) {
-	logf(1, Severity_Error, false, noStack, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Error, args...)
+	} else {
+		logf(1, Severity_Error, false, noStack, lnFormat(args), args...)
+	}
 }
 
 // Errorf logs to the ERROR, WARNING, and INFO logs.
@@ -738,25 +896,43 @@ func Errorf(format string, args ...any) {
 // ErrorContext is like [Error], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContext(ctx context.Context, args ...any) {
-	ErrorContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Error, ctx, args...)
+	} else {
+		ErrorContextDepth(ctx, 1, args...)
+	}
 }
 
 // ErrorContextf is like [Errorf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextf(ctx context.Context, format string, args ...any) {
-	ctxlogf(ctx, 1, Severity_Error, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Error, msg, nil)
+	} else {
+		ctxlogf(ctx, 1, Severity_Error, false, noStack, format, args...)
+	}
 }
 
 // ErrorContextDepth is like [ErrorDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Error, ctx, args...)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+	}
 }
 
 // ErrorContextDepthf is like [ErrorDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Error, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Error, msg, nil)
+	} else {
+		ctxlogf(ctx, depth+1, Severity_Error, false, noStack, format, args...)
+	}
 }
 
 func ctxfatalf(ctx context.Context, depth int, format string, args ...any) {
@@ -795,20 +971,35 @@ func Fatal(args ...any) {
 // FatalDepth acts as Fatal but uses depth to determine which call frame to log.
 // FatalDepth(0, "msg") is the same as Fatal("msg").
 func FatalDepth(depth int, args ...any) {
-	fatalf(depth+1, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Fatal, args...)
+		flushAndAbort()
+	} else {
+		fatalf(depth+1, defaultFormat(args), args...)
+	}
 }
 
 // FatalDepthf acts as Fatalf but uses depth to determine which call frame to log.
 // FatalDepthf(0, "msg") is the same as Fatalf("msg").
 func FatalDepthf(depth int, format string, args ...any) {
-	fatalf(depth+1, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Fatal, format, args...)
+		flushAndAbort()
+	} else {
+		fatalf(depth+1, format, args...)
+	}
 }
 
 // Fatalln logs to the FATAL, ERROR, WARNING, and INFO logs,
 // including a stack trace of all running goroutines, then calls os.Exit(2).
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Fatalln(args ...any) {
-	fatalf(1, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Fatal, args...)
+		flushAndAbort()
+	} else {
+		fatalf(1, lnFormat(args), args...)
+	}
 }
 
 // Fatalf logs to the FATAL, ERROR, WARNING, and INFO logs,
@@ -826,24 +1017,46 @@ func Fatalf(format string, args ...any) {
 // FatalContext is like [Fatal], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func FatalContext(ctx context.Context, args ...any) {
-	FatalContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Fatal, ctx, args...)
+		flushAndAbort()
+	} else {
+		FatalContextDepth(ctx, 1, args...)
+	}
 }
 
 // FatalContextf is like [Fatalf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func FatalContextf(ctx context.Context, format string, args ...any) {
-	ctxfatalf(ctx, 1, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Fatal, msg, nil)
+		flushAndAbort()
+	} else {
+		ctxfatalf(ctx, 1, format, args...)
+	}
 }
 
 // FatalContextDepth is like [FatalDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func FatalContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxfatalf(ctx, depth+1, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Fatal, ctx, args...)
+		flushAndAbort()
+	} else {
+		ctxfatalf(ctx, depth+1, defaultFormat(args), args...)
+	}
 }
 
 // FatalContextDepthf is like [FatalDepthf], but with an extra [context.Context] parameter.
 func FatalContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxfatalf(ctx, depth+1, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Fatal, msg, nil)
+		flushAndAbort()
+	} else {
+		ctxfatalf(ctx, depth+1, format, args...)
+	}
 }
 
 func ctxexitf(ctx context.Context, depth int, format string, args ...any) {
@@ -871,18 +1084,36 @@ func Exit(args ...any) {
 // ExitDepth acts as Exit but uses depth to determine which call frame to log.
 // ExitDepth(0, "msg") is the same as Exit("msg").
 func ExitDepth(depth int, args ...any) {
-	exitf(depth+1, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Fatal, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		exitf(depth+1, defaultFormat(args), args...)
+	}
 }
 
 // ExitDepthf acts as Exitf but uses depth to determine which call frame to log.
 // ExitDepthf(0, "msg") is the same as Exitf("msg").
 func ExitDepthf(depth int, format string, args ...any) {
-	exitf(depth+1, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Fatal, format, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		exitf(depth+1, format, args...)
+	}
 }
 
 // Exitln logs to the FATAL, ERROR, WARNING, and INFO logs, then calls os.Exit(1).
 func Exitln(args ...any) {
-	exitf(1, lnFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Fatal, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		exitf(1, lnFormat(args), args...)
+	}
 }
 
 // Exitf logs to the FATAL, ERROR, WARNING, and INFO logs, then calls os.Exit(1).
@@ -900,23 +1131,49 @@ func Exitf(format string, args ...any) {
 // ExitContext is like [Exit], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ExitContext(ctx context.Context, args ...any) {
-	ExitContextDepth(ctx, 1, args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Fatal, ctx, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		ExitContextDepth(ctx, 1, args...)
+	}
 }
 
 // ExitContextf is like [Exitf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ExitContextf(ctx context.Context, format string, args ...any) {
-	ctxexitf(ctx, 1, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Fatal, msg, nil)
+		Close()
+		os.Exit(1)
+	} else {
+		ctxexitf(ctx, 1, format, args...)
+	}
 }
 
 // ExitContextDepth is like [ExitDepth], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ExitContextDepth(ctx context.Context, depth int, args ...any) {
-	ctxexitf(ctx, depth+1, defaultFormat(args), args...)
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Fatal, ctx, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		ctxexitf(ctx, depth+1, defaultFormat(args), args...)
+	}
 }
 
 // ExitContextDepthf is like [ExitDepthf], but with an extra [context.Context] parameter. The
 // context is used to pass the Trace Context to log sinks.
 func ExitContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	ctxexitf(ctx, depth+1, format, args...)
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Fatal, msg, nil)
+		Close()
+		os.Exit(1)
+	} else {
+		ctxexitf(ctx, depth+1, format, args...)
+	}
 }
