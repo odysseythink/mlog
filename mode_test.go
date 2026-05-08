@@ -87,7 +87,7 @@ func TestLoggerInfoStructuredMode(t *testing.T) {
 	logger.Info("request", String("path", "/api"))
 }
 
-func TestLoggerPrintfMode(t *testing.T) {
+func TestLoggerPrintfModeBasic(t *testing.T) {
 	setPrintf()
 	// Default is printf mode, no SetLogMode call needed
 
