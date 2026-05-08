@@ -498,13 +498,24 @@ func VDepth(depth int, level Level) Verbose {
 // Info is equivalent to the global Info function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) Info(args ...any) {
-	v.InfoDepth(1, args...)
+	if getMode() == LogModeStructured {
+		if v {
+			infoStructured(1, Severity_Info, args...)
+		}
+	} else {
+		v.InfoDepth(1, args...)
+	}
 }
 
 // InfoDepth is equivalent to the global InfoDepth function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoDepth(depth int, args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		infoStructured(depth+1, Severity_Info, args...)
+	} else {
 		logf(depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
@@ -512,7 +523,12 @@ func (v Verbose) InfoDepth(depth int, args ...any) {
 // InfoDepthf is equivalent to the global InfoDepthf function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoDepthf(depth int, format string, args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		infofStructured(depth+1, Severity_Info, format, args...)
+	} else {
 		logf(depth+1, Severity_Info, true, noStack, format, args...)
 	}
 }
@@ -520,7 +536,12 @@ func (v Verbose) InfoDepthf(depth int, format string, args ...any) {
 // Infoln is equivalent to the global Infoln function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) Infoln(args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		infoLnStructured(1, Severity_Info, args...)
+	} else {
 		logf(1, Severity_Info, true, noStack, lnFormat(args), args...)
 	}
 }
@@ -536,13 +557,26 @@ func (v Verbose) Infof(format string, args ...any) {
 // InfoContext is equivalent to the global InfoContext function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoContext(ctx context.Context, args ...any) {
-	v.InfoContextDepth(ctx, 1, args...)
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		infoContextStructured(1, Severity_Info, ctx, args...)
+	} else {
+		v.InfoContextDepth(ctx, 1, args...)
+	}
 }
 
 // InfoContextf is equivalent to the global InfoContextf function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoContextf(ctx context.Context, format string, args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, 1, Severity_Info, msg, nil)
+	} else {
 		ctxlogf(ctx, 1, Severity_Info, true, noStack, format, args...)
 	}
 }
@@ -550,7 +584,12 @@ func (v Verbose) InfoContextf(ctx context.Context, format string, args ...any) {
 // InfoContextDepth is equivalent to the global InfoContextDepth function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoContextDepth(ctx context.Context, depth int, args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		infoContextStructured(depth+1, Severity_Info, ctx, args...)
+	} else {
 		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
@@ -558,7 +597,13 @@ func (v Verbose) InfoContextDepth(ctx context.Context, depth int, args ...any) {
 // InfoContextDepthf is equivalent to the global InfoContextDepthf function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) InfoContextDepthf(ctx context.Context, depth int, format string, args ...any) {
-	if v {
+	if !v {
+		return
+	}
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		ctxlogStructured(ctx, depth+1, Severity_Info, msg, nil)
+	} else {
 		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, format, args...)
 	}
 }
