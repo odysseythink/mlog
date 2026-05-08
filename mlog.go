@@ -230,6 +230,32 @@ func ctxlogf(ctx context.Context, depth int, severity Severity, verbose bool, st
 	metaPool.Put(metai)
 }
 
+// infoStructured extracts a message and fields from args for structured mode.
+// args[0] must be a string (the message). Any Field values in args[1:] are
+// extracted as structured fields. Non-Field values are ignored.
+func infoStructured(depth int, severity Severity, args ...any) {
+	if len(args) == 0 {
+		globalLogger.log(severity, "", nil)
+		return
+	}
+	msg, ok := args[0].(string)
+	if !ok {
+		msg = fmt.Sprint(args[0])
+	}
+	var fields []Field
+	for _, arg := range args[1:] {
+		if f, ok := arg.(Field); ok {
+			fields = append(fields, f)
+		}
+	}
+	globalLogger.log(severity, msg, fields)
+}
+
+func infofStructured(depth int, severity Severity, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	globalLogger.log(severity, msg, nil)
+}
+
 var sinkErrOnce sync.Once
 
 func sinkf(meta *LogsinkMeta, format string, args ...any) {
@@ -540,7 +566,11 @@ func DebugContextDepthf(ctx context.Context, depth int, format string, args ...a
 // Info logs to the INFO log.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Info(args ...any) {
-	InfoDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Info, args...)
+	} else {
+		InfoDepth(1, args...)
+	}
 }
 
 // InfoDepth calls Info from a different depth in the call stack.
@@ -566,7 +596,11 @@ func Infoln(args ...any) {
 // Infof logs to the INFO log.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Infof(format string, args ...any) {
-	logf(1, Severity_Info, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Info, format, args...)
+	} else {
+		logf(1, Severity_Info, false, noStack, format, args...)
+	}
 }
 
 // InfoContext is like [Info], but with an extra [context.Context] parameter. The
@@ -596,7 +630,11 @@ func InfoContextDepthf(ctx context.Context, depth int, format string, args ...an
 // Warning logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Warning(args ...any) {
-	WarningDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Warning, args...)
+	} else {
+		WarningDepth(1, args...)
+	}
 }
 
 // WarningDepth acts as Warning but uses depth to determine which call frame to log.
@@ -620,7 +658,11 @@ func Warningln(args ...any) {
 // Warningf logs to the WARNING and INFO logs.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Warningf(format string, args ...any) {
-	logf(1, Severity_Warning, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Warning, format, args...)
+	} else {
+		logf(1, Severity_Warning, false, noStack, format, args...)
+	}
 }
 
 // WarningContext is like [Warning], but with an extra [context.Context] parameter. The
@@ -650,7 +692,11 @@ func WarningContextDepthf(ctx context.Context, depth int, format string, args ..
 // Error logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Error(args ...any) {
-	ErrorDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Error, args...)
+	} else {
+		ErrorDepth(1, args...)
+	}
 }
 
 // ErrorDepth acts as Error but uses depth to determine which call frame to log.
@@ -674,7 +720,11 @@ func Errorln(args ...any) {
 // Errorf logs to the ERROR, WARNING, and INFO logs.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...any) {
-	logf(1, Severity_Error, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Error, format, args...)
+	} else {
+		logf(1, Severity_Error, false, noStack, format, args...)
+	}
 }
 
 // ErrorContext is like [Error], but with an extra [context.Context] parameter. The
@@ -726,7 +776,12 @@ func fatalf(depth int, format string, args ...any) {
 // including a stack trace of all running goroutines, then calls os.Exit(2).
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Fatal(args ...any) {
-	FatalDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Fatal, args...)
+		flushAndAbort()
+	} else {
+		FatalDepth(1, args...)
+	}
 }
 
 // FatalDepth acts as Fatal but uses depth to determine which call frame to log.
@@ -752,7 +807,12 @@ func Fatalln(args ...any) {
 // including a stack trace of all running goroutines, then calls os.Exit(2).
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Fatalf(format string, args ...any) {
-	fatalf(1, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Fatal, format, args...)
+		flushAndAbort()
+	} else {
+		fatalf(1, format, args...)
+	}
 }
 
 // FatalContext is like [Fatal], but with an extra [context.Context] parameter. The
