@@ -1,7 +1,9 @@
 package mlog
 
 import (
+	"fmt"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -63,6 +65,117 @@ func (l *Logger) Fatal(msg string, fields ...Field) {
 		l.log(Severity_Fatal, msg, fields)
 	} else {
 		FatalDepth(1, msg)
+	}
+}
+
+// Debug logs a structured message at DEBUG severity.
+func (l *Logger) Debug(msg string, fields ...Field) {
+	if getMode() == LogModeStructured {
+		l.log(Severity_Debug, msg, fields)
+	} else {
+		DebugDepth(1, msg)
+	}
+}
+
+// Infof logs a formatted structured message at INFO severity.
+func (l *Logger) Infof(format string, args ...any) {
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		l.log(Severity_Info, msg, nil)
+	} else {
+		InfoDepthf(1, format, args...)
+	}
+}
+
+// Debugf logs a formatted structured message at DEBUG severity.
+func (l *Logger) Debugf(format string, args ...any) {
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		l.log(Severity_Debug, msg, nil)
+	} else {
+		DebugDepthf(1, format, args...)
+	}
+}
+
+// Warningf logs a formatted structured message at WARNING severity.
+func (l *Logger) Warningf(format string, args ...any) {
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		l.log(Severity_Warning, msg, nil)
+	} else {
+		WarningDepthf(1, format, args...)
+	}
+}
+
+// Errorf logs a formatted structured message at ERROR severity.
+func (l *Logger) Errorf(format string, args ...any) {
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		l.log(Severity_Error, msg, nil)
+	} else {
+		ErrorDepthf(1, format, args...)
+	}
+}
+
+// Fatalf logs a formatted structured message at FATAL severity.
+func (l *Logger) Fatalf(format string, args ...any) {
+	if getMode() == LogModeStructured {
+		msg := fmt.Sprintf(format, args...)
+		l.log(Severity_Fatal, msg, nil)
+		flushAndAbort()
+	} else {
+		fatalf(1, format, args...)
+	}
+}
+
+// Infoln logs a structured message at INFO severity, space-separated like fmt.Println.
+func (l *Logger) Infoln(args ...any) {
+	if getMode() == LogModeStructured {
+		msg := strings.TrimSpace(fmt.Sprintln(args...))
+		l.log(Severity_Info, msg, nil)
+	} else {
+		Infoln(args...)
+	}
+}
+
+// Debugln logs a structured message at DEBUG severity, space-separated like fmt.Println.
+func (l *Logger) Debugln(args ...any) {
+	if getMode() == LogModeStructured {
+		msg := strings.TrimSpace(fmt.Sprintln(args...))
+		l.log(Severity_Debug, msg, nil)
+	} else {
+		Debugln(args...)
+	}
+}
+
+// Warningln logs a structured message at WARNING severity, space-separated like fmt.Println.
+func (l *Logger) Warningln(args ...any) {
+	if getMode() == LogModeStructured {
+		msg := strings.TrimSpace(fmt.Sprintln(args...))
+		l.log(Severity_Warning, msg, nil)
+	} else {
+		Warningln(args...)
+	}
+}
+
+// Errorln logs a structured message at ERROR severity, space-separated like fmt.Println.
+func (l *Logger) Errorln(args ...any) {
+	if getMode() == LogModeStructured {
+		msg := strings.TrimSpace(fmt.Sprintln(args...))
+		l.log(Severity_Error, msg, nil)
+	} else {
+		Errorln(args...)
+	}
+}
+
+// Fatalln logs a structured message at FATAL severity, space-separated like fmt.Println.
+func (l *Logger) Fatalln(args ...any) {
+	if getMode() == LogModeStructured {
+		msg := strings.TrimSpace(fmt.Sprintln(args...))
+		l.log(Severity_Fatal, msg, nil)
+		flushAndAbort()
+	} else {
+		Fatalln(args...)
 	}
 }
 
