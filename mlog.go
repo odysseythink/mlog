@@ -510,7 +510,11 @@ func (v Verbose) InfoContextDepthf(ctx context.Context, depth int, format string
 // Debug logs to the DEBUG log.
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Debug(args ...any) {
-	DebugDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Debug, args...)
+	} else {
+		DebugDepth(1, args...)
+	}
 }
 
 // DebugDepth calls Debug from a different depth in the call stack.
@@ -536,7 +540,11 @@ func Debugln(args ...any) {
 // Debugf logs to the DEBUG log.
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Debugf(format string, args ...any) {
-	logf(1, Severity_Debug, false, noStack, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Debug, format, args...)
+	} else {
+		logf(1, Severity_Debug, false, noStack, format, args...)
+	}
 }
 
 // DebugContext is like [Debug], but with an extra [context.Context] parameter. The
@@ -851,7 +859,13 @@ func exitf(depth int, format string, args ...any) {
 // Exit logs to the FATAL, ERROR, WARNING, and INFO logs, then calls os.Exit(1).
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Exit(args ...any) {
-	ExitDepth(1, args...)
+	if getMode() == LogModeStructured {
+		infoStructured(1, Severity_Fatal, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		ExitDepth(1, args...)
+	}
 }
 
 // ExitDepth acts as Exit but uses depth to determine which call frame to log.
@@ -874,7 +888,13 @@ func Exitln(args ...any) {
 // Exitf logs to the FATAL, ERROR, WARNING, and INFO logs, then calls os.Exit(1).
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Exitf(format string, args ...any) {
-	exitf(1, format, args...)
+	if getMode() == LogModeStructured {
+		infofStructured(1, Severity_Fatal, format, args...)
+		Close()
+		os.Exit(1)
+	} else {
+		exitf(1, format, args...)
+	}
 }
 
 // ExitContext is like [Exit], but with an extra [context.Context] parameter. The
