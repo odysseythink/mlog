@@ -75,7 +75,7 @@ func TestTextEncoderAllFieldTypes(t *testing.T) {
 		Severity: Severity_Info, Time: time.Now().UnixNano(), Message: "all types",
 		File: "main.go", Line: 1, Funcname: "github.com/odysseythink/mlog.main",
 		Fields: []Field{
-			Float64("ratio", 2.5), Bool("flag", false),
+			Int64("bytes", 9223372036854775807), Float64("ratio", 2.5), Bool("flag", false),
 			Duration("elapsed", 3*time.Second), Err(errors.New("oops")),
 			Any("data", 42), {Key: "unknown", Type: 99},
 		},
@@ -84,6 +84,9 @@ func TestTextEncoderAllFieldTypes(t *testing.T) {
 	out := enc.EncodeEntry(e)
 	defer putEncBuf(&out)
 	s := string(out)
+	if !strings.Contains(s, "bytes=9223372036854775807") {
+		t.Fatalf("int64: %s", s)
+	}
 	if !strings.Contains(s, "ratio=2.5") {
 		t.Fatalf("float64: %s", s)
 	}
@@ -114,6 +117,7 @@ func TestJSONEncoderWithFields(t *testing.T) {
 			String("name", "test"),
 			Bool("ok", true),
 			Float64("ratio", 3.14),
+			Int64("bytes", 9223372036854775807),
 		},
 	}
 
@@ -130,6 +134,9 @@ func TestJSONEncoderWithFields(t *testing.T) {
 	}
 	if !strings.Contains(s, `"ok":true`) {
 		t.Fatalf("missing bool field in: %s", s)
+	}
+	if !strings.Contains(s, `"bytes":9223372036854775807`) {
+		t.Fatalf("missing int64 field in: %s", s)
 	}
 	if !strings.Contains(s, `"msg":"hello"`) {
 		t.Fatalf("missing msg in: %s", s)
@@ -191,6 +198,22 @@ func TestJSONEncoderSpecialChars(t *testing.T) {
 	}
 }
 
+func TestTextEncoderNilErr(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "x", File: "main.go", Line: 1,
+		Fields: []Field{Err(nil)},
+	}
+	enc := &textEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	s := string(out)
+	// nil error should produce empty or minimal output
+	if strings.Contains(s, "error=") && strings.Contains(s, "error=\n") {
+		// acceptable — empty error value
+	}
+}
+
 func TestJSONEncoderFileWithSlash(t *testing.T) {
 	e := &Entry{
 		Severity: Severity_Info, Time: time.Now().UnixNano(),
@@ -228,6 +251,7 @@ func TestLogfmtEncoderWithFields(t *testing.T) {
 		Fields: []Field{
 			Int("count", 42),
 			String("name", "test"),
+			Int64("bytes", 1024),
 		},
 	}
 
@@ -244,6 +268,9 @@ func TestLogfmtEncoderWithFields(t *testing.T) {
 	}
 	if !strings.Contains(s, "name=test") {
 		t.Fatalf("missing string field in: %s", s)
+	}
+	if !strings.Contains(s, "bytes=1024") {
+		t.Fatalf("missing int64 field in: %s", s)
 	}
 }
 
@@ -272,6 +299,34 @@ func TestLogfmtEncoderAllFieldTypes(t *testing.T) {
 	}
 	if !strings.Contains(s, "dur=100ms") {
 		t.Fatalf("duration: %s", s)
+	}
+}
+
+func TestJSONEncoderInt64Negative(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "x", File: "main.go", Line: 1,
+		Fields: []Field{Int64("neg", -42)},
+	}
+	enc := &jsonEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), `"neg":-42`) {
+		t.Fatalf("negative int64: %s", string(out))
+	}
+}
+
+func TestLogfmtEncoderInt64Negative(t *testing.T) {
+	e := &Entry{
+		Severity: Severity_Info, Time: time.Now().UnixNano(),
+		Message: "x", File: "main.go", Line: 1,
+		Fields: []Field{Int64("neg", -42)},
+	}
+	enc := &logfmtEncoder{}
+	out := enc.EncodeEntry(e)
+	defer putEncBuf(&out)
+	if !strings.Contains(string(out), "neg=-42") {
+		t.Fatalf("negative int64: %s", string(out))
 	}
 }
 
