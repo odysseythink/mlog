@@ -113,14 +113,15 @@ func logName(tag string, t time.Time) (name, link string) {
 		shortprogram = strings.TrimSuffix(program, ".exe")
 	}
 
-	name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.log",
+	name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.%d.log",
 		shortprogram,
 		t.Year(),
 		t.Month(),
 		t.Day(),
 		t.Hour(),
 		t.Minute(),
-		t.Second())
+		t.Second(),
+		pid)
 
 	return name, program + "." + tag
 }

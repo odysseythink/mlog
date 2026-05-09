@@ -3,8 +3,11 @@ package mlog
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSetLogDir(t *testing.T) {
@@ -83,6 +86,15 @@ func TestStderrSinkEnabled(t *testing.T) {
 	toStderr = true
 	if !s.Enabled(meta) {
 		t.Error("expected true when toStderr=true")
+	}
+}
+
+func TestLogNameContainsPid(t *testing.T) {
+	now := time.Now()
+	name, _ := logName("INFO", now)
+	wantPid := fmt.Sprintf(".%d.log", pid)
+	if !strings.HasSuffix(name, wantPid) {
+		t.Errorf("logName suffix = %q, want suffix %q", name, wantPid)
 	}
 }
 
