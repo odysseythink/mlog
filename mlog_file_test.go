@@ -219,3 +219,28 @@ func TestFileSinkDisabledByDefault(t *testing.T) {
 		t.Error("fileSinkSet should be disabled by default when logDir is empty")
 	}
 }
+
+func TestSetOutput(t *testing.T) {
+	var buf bytes.Buffer
+	origToStderr := toStderr
+	defer func() { toStderr = origToStderr }()
+
+	SetOutput(&buf)
+	if !toStderr {
+		t.Error("toStderr should be true after SetOutput")
+	}
+}
+
+func TestSetLevel(t *testing.T) {
+	orig := *logBufLevel
+	defer func() { *logBufLevel = orig }()
+
+	SetLevel(7)
+	if *logBufLevel != 7 {
+		t.Errorf("logBufLevel = %d, want 7", *logBufLevel)
+	}
+	SetLevel(int64(9))
+	if *logBufLevel != 9 {
+		t.Errorf("logBufLevel = %d, want 9", *logBufLevel)
+	}
+}

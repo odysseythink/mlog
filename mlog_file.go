@@ -40,6 +40,20 @@ func SetMaxLogSize(sz int) {
 	MaxSize = uint64(sz * 1024 * 1024)
 }
 
+// SetOutput sets the writer used by the stderr sink and enables stderr logging.
+// This is a runtime alternative to the -logtostderr flag.
+func SetOutput(w io.Writer) {
+	sinks.stderr.mu.Lock()
+	sinks.stderr.w = w
+	sinks.stderr.mu.Unlock()
+	toStderr = true
+}
+
+// SetLevel sets the log buffer level. It is a convenience alias for SetLogLevel.
+func SetLevel[T int | int16 | int32 | int64 | uint | uint16 | uint32 | uint64](level T) {
+	SetLogLevel(level)
+}
+
 func pathExist(path string) bool {
 	_, err := os.Stat(path)
 	if err != nil {
