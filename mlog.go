@@ -328,7 +328,11 @@ func sinkf(meta *LogsinkMeta, format string, args ...any) {
 	if err != nil {
 		sinkErrOnce.Do(func() {
 			// 降级到 stderr，绝不终止进程。
-			fmt.Fprintf(SinkErrorWriter, "mlog: error writing to sinks: %v\n", err)
+			w := SinkErrorWriter
+			if w == nil {
+				w = os.Stderr
+			}
+			fmt.Fprintf(w, "mlog: error writing to sinks: %v\n", err)
 		})
 	}
 }

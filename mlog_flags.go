@@ -393,10 +393,7 @@ func init() {
 
 	stderrThreshold = severityFlag(Severity_Error)
 
-	flag.BoolVar(&toStderr, "logtostderr", false, "log to standard error instead of files")
+	flag.BoolVar(&toStderr, "logtostderr", true, "log to standard error instead of files")
 	flag.BoolVar(&alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")
 	flag.Var(&stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
-
-	// 默认输出到 stderr；文件日志需要显式启用 -log_dir。
-	toStderr = true
 }

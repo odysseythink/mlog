@@ -223,11 +223,20 @@ func TestFileSinkDisabledByDefault(t *testing.T) {
 func TestSetOutput(t *testing.T) {
 	var buf bytes.Buffer
 	origToStderr := toStderr
-	defer func() { toStderr = origToStderr }()
+	origWriter := sinks.stderr.w
+	defer func() {
+		toStderr = origToStderr
+		sinks.stderr.mu.Lock()
+		sinks.stderr.w = origWriter
+		sinks.stderr.mu.Unlock()
+	}()
 
 	SetOutput(&buf)
 	if !toStderr {
 		t.Error("toStderr should be true after SetOutput")
+	}
+	if sinks.stderr.w != &buf {
+		t.Error("sinks.stderr.w should point to the provided writer")
 	}
 }
 
