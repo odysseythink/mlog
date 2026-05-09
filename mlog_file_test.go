@@ -185,17 +185,37 @@ func TestCreateLogDirs(t *testing.T) {
 
 func TestFileSinkSetEnabled(t *testing.T) {
 	origToStderr := toStderr
-	defer func() { toStderr = origToStderr }()
+	origLogDir := *logDir
+	defer func() {
+		toStderr = origToStderr
+		*logDir = origLogDir
+	}()
 
 	fss := &fileSinkSet{}
 	toStderr = false
+	*logDir = "/var/log/test"
 	meta := &LogsinkMeta{Severity: Severity_Info}
 	if !fss.Enabled(meta) {
-		t.Error("fileSinkSet.Enabled should be true when toStderr=false")
+		t.Error("fileSinkSet.Enabled should be true when toStderr=false and logDir is set")
 	}
 
 	toStderr = true
 	if fss.Enabled(meta) {
 		t.Error("fileSinkSet.Enabled should be false when toStderr=true")
+	}
+
+	*logDir = ""
+	toStderr = false
+	if fss.Enabled(meta) {
+		t.Error("fileSinkSet.Enabled should be false when logDir is empty")
+	}
+}
+
+func TestFileSinkDisabledByDefault(t *testing.T) {
+	// 默认 toStderr=true, logDir=""
+	fss := &fileSinkSet{}
+	meta := &LogsinkMeta{Severity: Severity_Info}
+	if fss.Enabled(meta) {
+		t.Error("fileSinkSet should be disabled by default when logDir is empty")
 	}
 }

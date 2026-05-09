@@ -269,7 +269,7 @@ type fileSink struct {
 
 // Enabled implements TextSink.Enabled.
 func (fss *fileSinkSet) Enabled(m *LogsinkMeta) bool {
-	return !toStderr
+	return !toStderr && *logDir != ""
 }
 
 // Emit implements TextSink.Emit with multi-sink fan-out.

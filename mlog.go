@@ -37,11 +37,12 @@
 // Log output is buffered and written periodically using Flush. Programs
 // should call Flush before exiting to guarantee all log output is written.
 //
-// By default, all log statements write to files in a temporary directory.
+// By default, all log statements write to standard error.
+// File logging is opt-in and requires setting -log_dir.
 // This package provides several flags that modify this behavior.
 // As a result, flag.Parse must be called before any logging is done.
 //
-//	-logtostderr=false
+//	-logtostderr=true
 //		Logs are written to standard error instead of to files.
 //	-alsologtostderr=false
 //		Logs are written to standard error as well as to files.
@@ -49,8 +50,8 @@
 //		Log events at or above this severity are logged to standard
 //		error as well as to files.
 //	-log_dir=""
-//		Log files will be written to this directory instead of the
-//		default temporary directory.
+//		If non-empty, write log files in this directory. File logging
+//		is disabled by default.
 //
 // Other flags provide aids to debugging.
 //
