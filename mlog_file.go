@@ -317,8 +317,9 @@ func (fss *fileSinkSet) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 
 	// ERROR and above: block on ack for durable visibility
 	if m.Severity >= Severity_Error {
+		ack := entry.ack
 		select {
-		case <-entry.ack:
+		case <-ack:
 		case <-time.After(5 * time.Second):
 			fmt.Fprintf(os.Stderr, "mlog: ERROR ack timeout\n")
 		}

@@ -585,9 +585,9 @@ func TestAsyncWriterMainSelectTicker(t *testing.T) {
 	// Push many entries so the writer repeatedly evaluates the main select.
 	for i := 0; i < 500; i++ {
 		entry := logEntryPool.Get().(*logEntry)
-		b := entryBufPool.Get().(*[]byte)
-		*b = append((*b)[:0], []byte("main tick\n")...)
-		entry.data = *b
+		// Use a fresh allocation to avoid data-race with pool reuse.
+		data := []byte("main tick\n")
+		entry.data = data
 		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
@@ -704,5 +704,42 @@ func TestBatchWriterFlushBufErrors(t *testing.T) {
 	err = bw2.flushBuf()
 	if err == nil {
 		t.Fatal("expected flushBuf error from sink.Flush")
+	}
+}
+
+func TestAsyncWriterCloseDrainsPending(t *testing.T) {
+	f, err := os.CreateTemp("", "asyncwriter-close-drain-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+
+	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb.Writer = bufio.NewWriterSize(f, bufferSize)
+	rb := newRingBuffer(64)
+	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+
+	aw := newAsyncWriter(bw, 8)
+
+	for i := 0; i < 5; i++ {
+		entry := logEntryPool.Get().(*logEntry)
+		b := entryBufPool.Get().(*[]byte)
+		*b = append((*b)[:0], []byte("drain test\n")...)
+		entry.data = *b
+		entry.refCnt.Store(1)
+		rb.tryPush(entry)
+	}
+
+	// Close immediately without waking. The writer should drain pending
+	// entries during the close case in writerLoop.
+	aw.close()
+
+	content, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Count(content, []byte("\n"))
+	if lines != 5 {
+		t.Fatalf("expected 5 lines, got %d", lines)
 	}
 }

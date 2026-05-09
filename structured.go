@@ -286,8 +286,9 @@ func structuredEmit(entry *Entry, sev Severity) {
 
 	// ERROR and above: block on ack for durable visibility
 	if sev >= Severity_Error {
+		ack := le.ack
 		select {
-		case <-le.ack:
+		case <-ack:
 		case <-time.After(5 * time.Second):
 		}
 	}
