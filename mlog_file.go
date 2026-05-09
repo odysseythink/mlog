@@ -29,6 +29,9 @@ var (
 
 func SetLogDir(path string) {
 	*logDir = path
+	// Reset so create() will re-evaluate logDirs on next use.
+	logDirs = nil
+	onceLogDirs = sync.Once{}
 }
 
 func SetLogLevel[T int | int16 | int32 | int64 | uint | uint16 | uint32 | uint64](level T) {
@@ -127,7 +130,7 @@ func logName(tag string, t time.Time) (name, link string) {
 		shortprogram = strings.TrimSuffix(program, ".exe")
 	}
 
-	name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.%d.log",
+	name = fmt.Sprintf("%s-%04d%02d%02d-%02d%02d%02d.%09d.%d.log",
 		shortprogram,
 		t.Year(),
 		t.Month(),
@@ -135,6 +138,7 @@ func logName(tag string, t time.Time) (name, link string) {
 		t.Hour(),
 		t.Minute(),
 		t.Second(),
+		t.Nanosecond(),
 		pid)
 
 	return name, program + "." + tag
@@ -159,15 +163,15 @@ func create(tag string, t time.Time, dir string) (f *os.File, filename string, e
 	if len(logDirs) == 0 {
 		return nil, "", errors.New("log: no log dirs")
 	}
-	var lastErr error
+	var errs []string
 	for _, dir := range logDirs {
 		f, name, err := createInDir(dir, tag, t)
 		if err == nil {
 			return f, name, err
 		}
-		lastErr = err
+		errs = append(errs, fmt.Sprintf("%s: %v", dir, err))
 	}
-	return nil, "", fmt.Errorf("log: cannot create log: %v", lastErr)
+	return nil, "", fmt.Errorf("log: cannot create log in any dir: %s", strings.Join(errs, "; "))
 }
 
 func createInDir(dir, tag string, t time.Time) (f *os.File, name string, err error) {

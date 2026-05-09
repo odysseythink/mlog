@@ -348,11 +348,11 @@ var (
 )
 
 var (
-	ringSizeFlag    = flag.Int("log_ring_size", defaultRingSize, "Size of the async log ring buffer per severity (power of 2)")
-	batchSizeFlag   = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
-	logRateLimit    = flag.Int("log_rate_limit", 0, "Maximum log entries per second (0 = disabled)")
-	logEncoderFlag  = flag.String("log_encoder", "text", "Log encoder: text, json, logfmt")
-	logModeFlag     = flag.String("log_mode", "printf", "Log output mode: printf or structured")
+	ringSizeFlag   = flag.Int("log_ring_size", defaultRingSize, "Size of the async log ring buffer per severity (power of 2)")
+	batchSizeFlag  = flag.Int("log_batch_size", defaultBatchSize, "Number of entries to batch before writing to disk")
+	logRateLimit   = flag.Int("log_rate_limit", 0, "Maximum log entries per second (0 = disabled)")
+	logEncoderFlag = flag.String("log_encoder", "text", "Log encoder: text, json, logfmt")
+	logModeFlag    = flag.String("log_mode", "printf", "Log output mode: printf or structured")
 )
 
 var flagModeOnce sync.Once

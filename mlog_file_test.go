@@ -92,9 +92,9 @@ func TestStderrSinkEnabled(t *testing.T) {
 func TestLogNameContainsPid(t *testing.T) {
 	now := time.Now()
 	name, _ := logName("INFO", now)
-	wantPid := fmt.Sprintf(".%d.log", pid)
-	if !strings.HasSuffix(name, wantPid) {
-		t.Errorf("logName suffix = %q, want suffix %q", name, wantPid)
+	wantSuffix := fmt.Sprintf(".%09d.%d.log", now.Nanosecond(), pid)
+	if !strings.HasSuffix(name, wantSuffix) {
+		t.Errorf("logName suffix = %q, want suffix %q", name, wantSuffix)
 	}
 }
 
@@ -147,6 +147,11 @@ func TestAcquireEntry(t *testing.T) {
 }
 
 func TestNamesErrNoLog(t *testing.T) {
+	// Isolate from tests that may have initialized file sinks.
+	orig := sinks.file
+	sinks.file = fileSinkSet{}
+	defer func() { sinks.file = orig }()
+
 	// Before any log files are created, Names should return ErrNoLog.
 	_, err := Names("INFO")
 	if !errors.Is(err, ErrNoLog) {
