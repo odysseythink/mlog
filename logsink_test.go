@@ -595,3 +595,24 @@ func (s *fakeTextSink) Emit(meta *mlog.LogsinkMeta, bytes []byte) (n int, err er
 	s.calls++
 	return s.byteCount, s.err
 }
+
+func TestSinkErrorDoesNotAbort(t *testing.T) {
+	// 保存并恢复全局状态
+	originalTextSinks := mlog.TextSinks
+	defer func() { mlog.TextSinks = originalTextSinks }()
+
+	var buf bytes.Buffer
+	originalSinkErrorWriter := mlog.SinkErrorWriter
+	mlog.SinkErrorWriter = &buf
+	defer func() { mlog.SinkErrorWriter = originalSinkErrorWriter }()
+
+	mlog.TextSinks = []mlog.TextSink{&fakeTextSink{enabled: true, err: errors.New("intentional sink failure")}}
+
+	// 调用日志函数。若内部仍 abort，此测试进程会直接退出。
+	mlog.Info("this should not abort the process")
+
+	// 验证 stderr fallback 中包含了错误提示
+	if !bytes.Contains(buf.Bytes(), []byte("mlog: error writing to sinks")) {
+		t.Errorf("expected stderr fallback message, got %q", buf.String())
+	}
+}

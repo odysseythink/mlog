@@ -87,6 +87,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	stdLog "log"
 	"os"
 	"reflect"
@@ -313,6 +314,7 @@ func ctxlogStructured(ctx context.Context, depth int, severity Severity, msg str
 }
 
 var sinkErrOnce sync.Once
+var SinkErrorWriter io.Writer = os.Stderr // 允许测试时替换
 
 func sinkf(meta *LogsinkMeta, format string, args ...any) {
 	meta.Depth++
@@ -323,19 +325,9 @@ func sinkf(meta *LogsinkMeta, format string, args ...any) {
 	}
 
 	if err != nil {
-		// Best-effort to generate a reasonable Fatalf-like
-		// error message in all sinks that are still here for
-		// the first goroutine that comes here and terminate
-		// the process.
 		sinkErrOnce.Do(func() {
-			m := &LogsinkMeta{}
-			m.Time = timeNow()
-			m.Severity = Severity_Fatal
-			m.Thread = int64(pid)
-			_, m.File, m.Line, _ = runtime.Caller(0)
-			format, args := appendBacktrace(1, "log: exiting because of error writing previous log to sinks: %v", []any{err})
-			LogsinkPrintf(m, format, args...)
-			flushAndAbort()
+			// 降级到 stderr，绝不终止进程。
+			fmt.Fprintf(SinkErrorWriter, "mlog: error writing to sinks: %v\n", err)
 		})
 	}
 }
