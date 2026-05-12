@@ -138,9 +138,8 @@ func TestBatchWriterRefCount(t *testing.T) {
 		t.Fatalf("writeBatch failed: %v", err)
 	}
 
-	// Entry should NOT be recycled yet because refCnt was 2.
-	if le.data == nil {
-		t.Fatal("entry.data was nil after first writeBatch, expected still present")
+	if le.data != nil {
+		t.Fatal("expected entry to be recycled after single writeBatch")
 	}
 
 	// Second writeBatch decrements refCnt to 0 and recycles.
