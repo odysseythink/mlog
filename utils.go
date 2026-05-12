@@ -1,6 +1,8 @@
 package mlog
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -38,4 +40,19 @@ outer:
 func getCallerIgnoringLogMulti(callDepth int) (string, int) {
 	// the +1 is to ignore this (getCallerIgnoringLogMulti) frame
 	return getCaller(callDepth+1, "/pkg/log/log.go", "/pkg/io/multi.go")
+}
+
+func GetAppRoot() string {
+	if exePath, err := os.Executable(); err == nil {
+		if realPath, err := filepath.EvalSymlinks(exePath); err == nil {
+			return filepath.Dir(realPath)
+		}
+		return filepath.Dir(exePath)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+
+	_, filename, _, _ := runtime.Caller(1)
+	return filepath.Dir(filename)
 }

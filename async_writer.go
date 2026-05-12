@@ -9,12 +9,11 @@ import (
 )
 
 type batchWriter struct {
-	severity  Severity
-	ring      *ringBuffer
-	sink      *syncBuffer
-	buf       *bufio.Writer
-	batch     []*logEntry
-	stats     *writerStats
+	ring       *ringBuffer
+	sink       *syncBuffer
+	buf        *bufio.Writer
+	batch      []*logEntry
+	stats      *writerStats
 	pendingAck []chan struct{}
 }
 
@@ -25,14 +24,13 @@ type writerStats struct {
 	blockWaitNs atomic.Uint64
 }
 
-func newBatchWriter(sev Severity, rb *ringBuffer, sb *syncBuffer, batchSize int) *batchWriter {
+func newBatchWriter(rb *ringBuffer, sb *syncBuffer, batchSize int) *batchWriter {
 	return &batchWriter{
-		severity: sev,
-		ring:     rb,
-		sink:     sb,
-		buf:      bufio.NewWriterSize(sb, bufferSize),
-		batch:    make([]*logEntry, batchSize),
-		stats:    &writerStats{},
+		ring:  rb,
+		sink:  sb,
+		buf:   bufio.NewWriterSize(sb, bufferSize),
+		batch: make([]*logEntry, batchSize),
+		stats: &writerStats{},
 	}
 }
 
@@ -50,23 +48,23 @@ func (bw *batchWriter) writeBatch(entries []*logEntry, n int) error {
 				return err
 			}
 		}
-		if entry.refCnt.Add(-1) == 0 {
-			if entry.data != nil {
-				putEntryBuf(&entry.data)
-			}
-			if entry.entry != nil {
-				putEncBuf(&data)
-				putEntry(entry.entry)
-			}
-			if entry.ack != nil {
-				bw.pendingAck = append(bw.pendingAck, entry.ack)
-			}
-			entry.data = nil
-			entry.entry = nil
-			entry.meta = nil
-			entry.ack = nil
-			logEntryPool.Put(entry)
+
+		if entry.data != nil {
+			putEntryBuf(&entry.data)
 		}
+		if entry.entry != nil {
+			putEncBuf(&data)
+			putEntry(entry.entry)
+		}
+		if entry.ack != nil {
+			bw.pendingAck = append(bw.pendingAck, entry.ack)
+		}
+		entry.data = nil
+		entry.entry = nil
+		entry.meta = nil
+		entry.ack = nil
+		logEntryPool.Put(entry)
+
 		bw.stats.written.Add(1)
 	}
 	if bw.buf.Buffered() >= bufioHighWaterMark {
@@ -79,13 +77,14 @@ func (bw *batchWriter) writeBatch(entries []*logEntry, n int) error {
 
 // flushBuf flushes the bufio layers, signals pending acks, and syncs the file.
 func (bw *batchWriter) flushBuf() error {
+	defer bw.signalAcks()
 	if err := bw.buf.Flush(); err != nil {
 		return err
 	}
 	if err := bw.sink.Flush(); err != nil {
 		return err
 	}
-	bw.signalAcks()
+
 	bw.stats.flushed.Add(1)
 	return bw.sink.Sync()
 }

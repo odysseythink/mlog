@@ -163,11 +163,10 @@ var bufs sync.Pool // Pool of *bytes.Buffer.
 
 // logEntry is a pooled container for a formatted log entry and its metadata.
 type logEntry struct {
-	data   []byte     // old API: pre-formatted text
-	entry  *Entry     // new API: unencoded Entry (data is nil)
-	meta   *LogsinkMeta
-	ack    chan struct{} // For ERROR/FATAL: optional ack channel. nil for INFO/WARNING.
-	refCnt atomic.Int32  // = number of rings this entry was pushed to
+	data  []byte // old API: pre-formatted text
+	entry *Entry // new API: unencoded Entry (data is nil)
+	meta  *LogsinkMeta
+	ack   chan struct{} // For ERROR/FATAL: optional ack channel. nil for INFO/WARNING.
 }
 
 // entryBufPool holds pre-allocated []byte buffers to reduce allocations on the hot path.

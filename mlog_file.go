@@ -122,9 +122,9 @@ func shortHostname(hostname string) string {
 	return hostname
 }
 
-// logName returns a new log file name containing tag, with start time t, and
-// the name for the symlink for tag.
-func logName(tag string, t time.Time) (name, link string) {
+// logName returns a new log file name, with start time t, and
+// the name for the symlink.
+func logName(t time.Time) (name, link string) {
 	shortprogram := program
 	if strings.HasSuffix(program, ".exe") {
 		shortprogram = strings.TrimSuffix(program, ".exe")
@@ -141,18 +141,17 @@ func logName(tag string, t time.Time) (name, link string) {
 		t.Nanosecond(),
 		pid)
 
-	return name, program + "." + tag
+	return name, program + ".log"
 }
 
 var onceLogDirs sync.Once
 
 // create creates a new log file and returns the file and its filename, which
-// contains tag ("INFO", "FATAL", etc.) and t.  If the file is created
-// successfully, create also attempts to update the symlink for that tag, ignoring
-// errors.
-func create(tag string, t time.Time, dir string) (f *os.File, filename string, err error) {
+// contains t.  If the file is created successfully, create also attempts to
+// update the symlink, ignoring errors.
+func create(t time.Time, dir string) (f *os.File, filename string, err error) {
 	if dir != "" {
-		f, name, err := createInDir(dir, tag, t)
+		f, name, err := createInDir(dir, t)
 		if err == nil {
 			return f, name, err
 		}
@@ -165,7 +164,7 @@ func create(tag string, t time.Time, dir string) (f *os.File, filename string, e
 	}
 	var errs []string
 	for _, dir := range logDirs {
-		f, name, err := createInDir(dir, tag, t)
+		f, name, err := createInDir(dir, t)
 		if err == nil {
 			return f, name, err
 		}
@@ -174,8 +173,8 @@ func create(tag string, t time.Time, dir string) (f *os.File, filename string, e
 	return nil, "", fmt.Errorf("log: cannot create log in any dir: %s", strings.Join(errs, "; "))
 }
 
-func createInDir(dir, tag string, t time.Time) (f *os.File, name string, err error) {
-	name, link := logName(tag, t)
+func createInDir(dir string, t time.Time) (f *os.File, name string, err error) {
+	name, link := logName(t)
 	fname := filepath.Join(dir, name)
 	// O_EXCL is important here, as it prevents a vulnerability. The general idea is that logs often
 	// live in an insecure directory (like /tmp), so an unprivileged attacker could create fname in
@@ -207,10 +206,10 @@ type flushSyncWriter interface {
 
 // fileSinkSet manages per-severity ring buffers, async writers, and file sinks.
 type fileSinkSet struct {
-	rings   [numSeverity]*ringBuffer
-	writers [numSeverity]*asyncWriter
-	sinks   [numSeverity]*fileSink
-	mu      sync.Mutex
+	ring   *ringBuffer
+	writer *asyncWriter
+	sink   *fileSink
+	mu     sync.Mutex
 }
 
 var sinks struct {
@@ -245,10 +244,8 @@ func init() {
 	}
 	TextSinks = append(TextSinks, &sinks.file)
 
-	// Initialize per-severity rings
-	for i := 0; i < numSeverity; i++ {
-		sinks.file.rings[i] = newRingBuffer(*ringSizeFlag)
-	}
+	// Initialize ring
+	sinks.file.ring = newRingBuffer(*ringSizeFlag)
 }
 
 // stderrSink is a TextSink that writes log entries to stderr
@@ -299,35 +296,30 @@ func (fss *fileSinkSet) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 
 	// Lazy-init writers and files on first use
 	fss.mu.Lock()
-	for s := Severity_Debug; s <= sev; s++ {
-		if fss.writers[s] == nil {
-			fs := &fileSink{}
-			sb := &syncBuffer{sink: fs, sev: s}
-			if err := sb.rotateFile(timeNow()); err != nil {
-				fss.mu.Unlock()
-				return 0, err
-			}
-			fs.file = sb
-			fss.sinks[s] = fs
-			bw := newBatchWriter(s, fss.rings[s], sb, *batchSizeFlag)
-			fss.writers[s] = newAsyncWriter(bw, *batchSizeFlag)
+	if fss.writer == nil {
+		fs := &fileSink{}
+		sb := &syncBuffer{sink: fs}
+		if err := sb.rotateFile(timeNow()); err != nil {
+			fss.mu.Unlock()
+			return 0, err
 		}
+		fs.file = sb
+		fss.sink = fs
+		bw := newBatchWriter(fss.ring, sb, *batchSizeFlag)
+		fss.writer = newAsyncWriter(bw, *batchSizeFlag)
 	}
 	fss.mu.Unlock()
 
-	// Acquire entry and set refCount = number of rings it will be pushed to
-	numRings := int(sev) + 1
-	entry := acquireEntry(data, m, numRings)
+	// Acquire entry
+	entry := acquireEntry(data, m)
 
 	// Publish into rings in ascending severity order
 	dropped := false
-	for s := Severity_Debug; s <= sev; s++ {
-		if !fss.rings[s].tryPush(entry) {
-			dropped = true
-			fss.rings[s].dropped.Add(1)
-		}
-		fss.writers[s].wake()
+	if !fss.ring.tryPush(entry) {
+		dropped = true
+		fss.ring.dropped.Add(1)
 	}
+	fss.writer.wake()
 
 	if dropped {
 		atomic.AddInt64(&Stats.Dropped.lines, 1)
@@ -348,13 +340,12 @@ func (fss *fileSinkSet) Emit(m *LogsinkMeta, data []byte) (n int, err error) {
 }
 
 // acquireEntry gets a pooled logEntry and initializes it.
-func acquireEntry(data []byte, meta *LogsinkMeta, refCount int) *logEntry {
+func acquireEntry(data []byte, meta *LogsinkMeta) *logEntry {
 	entry := logEntryPool.Get().(*logEntry)
 	bp := entryBufPool.Get().(*[]byte)
 	*bp = append((*bp)[:0], data...)
 	entry.data = *bp
 	entry.meta = meta
-	entry.refCnt.Store(int32(refCount))
 	if meta.Severity >= Severity_Error {
 		entry.ack = make(chan struct{})
 	} else {
@@ -365,19 +356,15 @@ func acquireEntry(data []byte, meta *LogsinkMeta, refCount int) *logEntry {
 
 // Flush flushes all pending log I/O.
 func Flush() {
-	for i := 0; i < numSeverity; i++ {
-		if w := sinks.file.writers[i]; w != nil {
-			w.flush()
-		}
+	if w := sinks.file.writer; w != nil {
+		w.flush()
 	}
 }
 
 // Close gracefully shuts down all writers.
 func Close() error {
-	for i := 0; i < numSeverity; i++ {
-		if w := sinks.file.writers[i]; w != nil {
-			w.close()
-		}
+	if w := sinks.file.writer; w != nil {
+		w.close()
 	}
 	return nil
 }
@@ -385,21 +372,17 @@ func Close() error {
 // FatalShutdown drains all rings, writes FATAL entry to all files, fsyncs, and exits.
 // Must be called before os.Exit on Fatal paths.
 func FatalShutdown(fatalData []byte) {
-	for i := 0; i < numSeverity; i++ {
-		if sinks.file.writers[i] != nil {
-			sinks.file.writers[i].close()
-		}
+	if sinks.file.writer != nil {
+		sinks.file.writer.close()
 	}
 
 	// Write FATAL entry synchronously to all severity files
-	for s := Severity_Debug; s < numSeverity; s++ {
-		if sink := sinks.file.sinks[s]; sink != nil && sink.file != nil {
-			sink.mu.Lock()
-			sink.file.Write(fatalData)
-			sink.file.Flush()
-			sink.file.Sync()
-			sink.mu.Unlock()
-		}
+	if sink := sinks.file.sink; sink != nil && sink.file != nil {
+		sink.mu.Lock()
+		sink.file.Write(fatalData)
+		sink.file.Flush()
+		sink.file.Sync()
+		sink.mu.Unlock()
 	}
 }
 
@@ -408,18 +391,10 @@ func FatalShutdown(fatalData []byte) {
 // level doesn't exist (e.g. because no messages of that level have been
 // written). This may return multiple names if the log type requested
 // has rolled over.
-func Names(s string) ([]string, error) {
-	sev, err := ParseSeverity(s)
-	if err != nil {
-		return nil, err
-	}
-	if sev >= Severity_Fatal {
-		sev = Severity_Error
-	}
-
+func Names() ([]string, error) {
 	sinks.file.mu.Lock()
 	defer sinks.file.mu.Unlock()
-	f := sinks.file.sinks[sev]
+	f := sinks.file.sink
 	if f == nil || f.file == nil {
 		return nil, ErrNoLog
 	}

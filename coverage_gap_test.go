@@ -265,7 +265,7 @@ func TestSyncBufferRotation(t *testing.T) {
 	defer os.Remove(f.Name())
 
 	sink := &fileSink{}
-	sb := &syncBuffer{sink: sink, file: f, sev: Severity_Info, nbytes: 50}
+	sb := &syncBuffer{sink: sink, file: f, nbytes: 50}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	sb.madeAt = timeNow().Add(-2 * time.Second)
 
@@ -538,7 +538,7 @@ func TestLogNameExe(t *testing.T) {
 	program = "test.exe"
 	defer func() { program = origProgram }()
 
-	name, link := logName("INFO", timeNow())
+	name, link := logName(timeNow())
 	if !strings.Contains(name, "test-") {
 		t.Errorf("logName did not trim .exe: %q", name)
 	}
@@ -548,7 +548,7 @@ func TestLogNameExe(t *testing.T) {
 // TestCreateWithDir covers create with explicit dir.
 func TestCreateWithDir(t *testing.T) {
 	tmpDir := t.TempDir()
-	f, name, err := create("INFO", timeNow(), tmpDir)
+	f, name, err := create(timeNow(), tmpDir)
 	if err != nil {
 		t.Fatalf("create error: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestNamesFatalSeverity(t *testing.T) {
 	defer func() { sinks.file = orig }()
 
 	// FATAL should map to ERROR severity.
-	_, err := Names("FATAL")
+	_, err := Names()
 	if !errors.Is(err, ErrNoLog) {
 		t.Errorf("Names(FATAL) error = %v, want ErrNoLog", err)
 	}
@@ -776,7 +776,7 @@ func TestSyncBufferRotationSkipped(t *testing.T) {
 	defer os.Remove(f.Name())
 
 	sink := &fileSink{}
-	sb := &syncBuffer{sink: sink, file: f, sev: Severity_Info, nbytes: 50}
+	sb := &syncBuffer{sink: sink, file: f, nbytes: 50}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	// madeAt is now, so rotation should be skipped (same second and < 1s).
 	sb.madeAt = timeNow()
@@ -1007,7 +1007,7 @@ func TestCreateInDirWithLogLink(t *testing.T) {
 	program = "link_test_" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	defer func() { program = origProgram }()
 
-	f, name, err := createInDir(tmpDir, "INFO", timeNow())
+	f, name, err := createInDir(tmpDir, timeNow())
 	if err != nil {
 		t.Fatalf("createInDir error: %v", err)
 	}
@@ -1080,20 +1080,16 @@ func TestSeverityFlagGet(t *testing.T) {
 // TestFileSinkSetEmit covers fileSinkSet.Emit with pre-initialized writers.
 func TestFileSinkSetEmit(t *testing.T) {
 	fss := &fileSinkSet{}
-	for i := 0; i < numSeverity; i++ {
-		fss.rings[i] = newRingBuffer(64)
-	}
+	fss.ring = newRingBuffer(64)
 
 	// Pre-initialize writers so Emit does not need to create files.
-	for s := Severity_Debug; s <= Severity_Error; s++ {
-		tf, _ := os.CreateTemp("", "emit-test-*.log")
-		defer os.Remove(tf.Name())
-		sb := &syncBuffer{file: tf, sev: s}
-		sb.Writer = bufio.NewWriterSize(tf, bufferSize)
-		bw := newBatchWriter(s, fss.rings[s], sb, 8)
-		fss.writers[s] = newAsyncWriter(bw, 8)
-		fss.sinks[s] = &fileSink{file: sb}
-	}
+	tf, _ := os.CreateTemp("", "emit-test-*.log")
+	defer os.Remove(tf.Name())
+	sb := &syncBuffer{file: tf}
+	sb.Writer = bufio.NewWriterSize(tf, bufferSize)
+	bw := newBatchWriter(fss.ring, sb, 8)
+	fss.writer = newAsyncWriter(bw, 8)
+	fss.sink = &fileSink{file: sb}
 
 	meta := &LogsinkMeta{
 		Time:     timeNow(),
@@ -1118,26 +1114,23 @@ func TestFileSinkSetEmit(t *testing.T) {
 func TestFileSinkSetEmitDropped(t *testing.T) {
 	fss := &fileSinkSet{}
 	// Very small ring buffer so tryPush fails easily.
-	for i := 0; i < numSeverity; i++ {
-		fss.rings[i] = newRingBuffer(2)
-	}
+	fss.ring = newRingBuffer(2)
 
 	// Pre-initialize writers.
 	for s := Severity_Debug; s <= Severity_Info; s++ {
 		tf, _ := os.CreateTemp("", "emit-drop-*.log")
 		defer os.Remove(tf.Name())
-		sb := &syncBuffer{file: tf, sev: s}
+		sb := &syncBuffer{file: tf}
 		sb.Writer = bufio.NewWriterSize(tf, bufferSize)
-		bw := newBatchWriter(s, fss.rings[s], sb, 8)
-		fss.writers[s] = newAsyncWriter(bw, 8)
-		fss.sinks[s] = &fileSink{file: sb}
+		bw := newBatchWriter(fss.ring, sb, 8)
+		fss.writer = newAsyncWriter(bw, 8)
+		fss.sink = &fileSink{file: sb}
 	}
 
 	// Fill the ring buffer.
 	for i := 0; i < 2; i++ {
 		le := &logEntry{}
-		le.refCnt.Store(1)
-		fss.rings[Severity_Info].tryPush(le)
+		fss.ring.tryPush(le)
 	}
 
 	droppedBefore := atomic.LoadInt64(&Stats.Dropped.lines)
@@ -1156,7 +1149,7 @@ func TestFileSinkSetEmitDropped(t *testing.T) {
 	}
 
 	// Wait for async writer to process.
-	fss.writers[Severity_Info].flush()
+	fss.writer.flush()
 
 	droppedAfter := atomic.LoadInt64(&Stats.Dropped.lines)
 	if droppedAfter <= droppedBefore {
@@ -1167,19 +1160,15 @@ func TestFileSinkSetEmitDropped(t *testing.T) {
 // TestFileSinkSetEmitErrorAck covers the ERROR ack path in fileSinkSet.Emit.
 func TestFileSinkSetEmitErrorAck(t *testing.T) {
 	fss := &fileSinkSet{}
-	for i := 0; i < numSeverity; i++ {
-		fss.rings[i] = newRingBuffer(64)
-	}
+	fss.ring = newRingBuffer(64)
 
-	for s := Severity_Debug; s <= Severity_Error; s++ {
-		tf, _ := os.CreateTemp("", "emit-ack-*.log")
-		defer os.Remove(tf.Name())
-		sb := &syncBuffer{file: tf, sev: s}
-		sb.Writer = bufio.NewWriterSize(tf, bufferSize)
-		bw := newBatchWriter(s, fss.rings[s], sb, 8)
-		fss.writers[s] = newAsyncWriter(bw, 8)
-		fss.sinks[s] = &fileSink{file: sb}
-	}
+	tf, _ := os.CreateTemp("", "emit-ack-*.log")
+	defer os.Remove(tf.Name())
+	sb := &syncBuffer{file: tf}
+	sb.Writer = bufio.NewWriterSize(tf, bufferSize)
+	bw := newBatchWriter(fss.ring, sb, 8)
+	fss.writer = newAsyncWriter(bw, 8)
+	fss.sink = &fileSink{file: sb}
 
 	meta := &LogsinkMeta{
 		Time:     timeNow(),

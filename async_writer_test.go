@@ -15,17 +15,15 @@ func TestBatchWriterBasic(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	entries := []*logEntry{
 		{data: []byte("line1\n")},
 		{data: []byte("line2\n")},
 	}
-	entries[0].refCnt.Store(1)
-	entries[1].refCnt.Store(1)
 
 	if err := bw.writeBatch(entries, 2); err != nil {
 		t.Fatalf("writeBatch failed: %v", err)
@@ -51,10 +49,10 @@ func TestBatchWriterStructuredEntry(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Ensure text encoder is active.
 	SetEncoder(NewTextEncoder())
@@ -69,7 +67,6 @@ func TestBatchWriterStructuredEntry(t *testing.T) {
 
 	le := logEntryPool.Get().(*logEntry)
 	le.entry = entry
-	le.refCnt.Store(1)
 
 	if err := bw.writeBatch([]*logEntry{le}, 1); err != nil {
 		t.Fatalf("writeBatch failed: %v", err)
@@ -94,16 +91,15 @@ func TestBatchWriterEmptyData(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	b := entryBufPool.Get().(*[]byte)
 	*b = (*b)[:0]
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(1)
 
 	if err := bw.writeBatch([]*logEntry{le}, 1); err != nil {
 		t.Fatalf("writeBatch failed: %v", err)
@@ -128,16 +124,15 @@ func TestBatchWriterRefCount(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	b := entryBufPool.Get().(*[]byte)
 	*b = append((*b)[:0], []byte("refcount test\n")...)
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(2)
 
 	if err := bw.writeBatch([]*logEntry{le}, 1); err != nil {
 		t.Fatalf("writeBatch failed: %v", err)
@@ -146,9 +141,6 @@ func TestBatchWriterRefCount(t *testing.T) {
 	// Entry should NOT be recycled yet because refCnt was 2.
 	if le.data == nil {
 		t.Fatal("entry.data was nil after first writeBatch, expected still present")
-	}
-	if le.refCnt.Load() != 1 {
-		t.Fatalf("entry.refCnt = %d, want 1", le.refCnt.Load())
 	}
 
 	// Second writeBatch decrements refCnt to 0 and recycles.
@@ -167,10 +159,10 @@ func TestBatchWriterHighWaterMark(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Write enough data to exceed bufioHighWaterMark (192KB).
 	dataSize := 200 * 1024
@@ -184,7 +176,6 @@ func TestBatchWriterHighWaterMark(t *testing.T) {
 	*b = append((*b)[:0], largeData...)
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(1)
 
 	if err := bw.writeBatch([]*logEntry{le}, 1); err != nil {
 		t.Fatalf("writeBatch failed: %v", err)
@@ -207,17 +198,17 @@ func TestBatchWriterAckDelayedByRefCount(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Error}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Error, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	ack := make(chan struct{})
 	b := entryBufPool.Get().(*[]byte)
 	*b = append((*b)[:0], []byte("ack delay\n")...)
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(2)
+
 	le.ack = ack
 
 	// First writeBatch: refCnt 2 -> 1, ack should NOT be signaled.
@@ -256,9 +247,9 @@ func TestAsyncWriterRoundTrip(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 	aw := newAsyncWriter(bw, 8)
 	defer aw.close()
 
@@ -267,7 +258,6 @@ func TestAsyncWriterRoundTrip(t *testing.T) {
 		b := entryBufPool.Get().(*[]byte)
 		*b = append((*b)[:0], []byte("test line\n")...)
 		entry.data = *b
-		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
 
@@ -293,9 +283,9 @@ func TestAsyncWriterGracefulShutdown(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 	aw := newAsyncWriter(bw, 8)
 
 	for i := 0; i < 5; i++ {
@@ -303,7 +293,6 @@ func TestAsyncWriterGracefulShutdown(t *testing.T) {
 		b := entryBufPool.Get().(*[]byte)
 		*b = append((*b)[:0], []byte("shutdown test\n")...)
 		entry.data = *b
-		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
 
@@ -328,9 +317,9 @@ func TestAsyncWriterErrorAck(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Error}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
-	bw := newBatchWriter(Severity_Error, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 	aw := newAsyncWriter(bw, 8)
 	defer aw.close()
 
@@ -339,7 +328,6 @@ func TestAsyncWriterErrorAck(t *testing.T) {
 	b := entryBufPool.Get().(*[]byte)
 	*b = append((*b)[:0], []byte("error entry\n")...)
 	entry.data = *b
-	entry.refCnt.Store(1)
 	entry.ack = ack
 	rb.tryPush(entry)
 
@@ -359,10 +347,10 @@ func TestAsyncWriterPeriodicFlush(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Use a short flush interval so the ticker fires quickly.
 	aw := &asyncWriter{
@@ -382,7 +370,6 @@ func TestAsyncWriterPeriodicFlush(t *testing.T) {
 	b := entryBufPool.Get().(*[]byte)
 	*b = append((*b)[:0], []byte("ticker test\n")...)
 	entry.data = *b
-	entry.refCnt.Store(1)
 	rb.tryPush(entry)
 
 	aw.wake()
@@ -406,10 +393,10 @@ func TestAsyncWriterSpinWaitThenWake(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	aw := newAsyncWriter(bw, 8)
 	defer aw.close()
@@ -422,7 +409,6 @@ func TestAsyncWriterSpinWaitThenWake(t *testing.T) {
 	b := entryBufPool.Get().(*[]byte)
 	*b = append((*b)[:0], []byte("spin wake test\n")...)
 	entry.data = *b
-	entry.refCnt.Store(1)
 	rb.tryPush(entry)
 
 	aw.wake()
@@ -447,10 +433,10 @@ func TestAsyncWriterCloseDuringSpinWait(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	aw := newAsyncWriter(bw, 8)
 
@@ -460,7 +446,6 @@ func TestAsyncWriterCloseDuringSpinWait(t *testing.T) {
 		b := entryBufPool.Get().(*[]byte)
 		*b = append((*b)[:0], []byte("close spin test\n")...)
 		entry.data = *b
-		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
 
@@ -493,10 +478,10 @@ func TestAsyncWriterFlushRetry(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Manually create and start the asyncWriter so we can pre-fill flushReqCh
 	// while the writer is likely still in its spin loop.
@@ -544,10 +529,10 @@ func TestAsyncWriterDoubleClose(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	aw := newAsyncWriter(bw, 8)
 
@@ -562,10 +547,10 @@ func TestAsyncWriterMainSelectTicker(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Use a very short ticker so it fires frequently while the writer is
 	// looping through batches in the main select.
@@ -588,7 +573,6 @@ func TestAsyncWriterMainSelectTicker(t *testing.T) {
 		// Use a fresh allocation to avoid data-race with pool reuse.
 		data := []byte("main tick\n")
 		entry.data = data
-		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
 
@@ -608,10 +592,10 @@ func TestBatchWriterWriteError(t *testing.T) {
 	f.Close() // close so writes fail
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Write data larger than bufferSize so bufio writes directly to sb.
 	largeData := make([]byte, bufferSize+1)
@@ -624,7 +608,6 @@ func TestBatchWriterWriteError(t *testing.T) {
 	*b = append((*b)[:0], largeData...)
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(1)
 
 	err = bw.writeBatch([]*logEntry{le}, 1)
 	if err == nil {
@@ -640,10 +623,10 @@ func TestBatchWriterAutoFlushError(t *testing.T) {
 	f.Close() // close so flushes fail
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Fill the inner bufio so that flushing it to the closed file fails.
 	sb.Write(make([]byte, bufferSize-1))
@@ -660,7 +643,6 @@ func TestBatchWriterAutoFlushError(t *testing.T) {
 	*b = append((*b)[:0], largeData...)
 	le := logEntryPool.Get().(*logEntry)
 	le.data = *b
-	le.refCnt.Store(1)
 
 	err = bw.writeBatch([]*logEntry{le}, 1)
 	if err == nil {
@@ -676,10 +658,10 @@ func TestBatchWriterFlushBufErrors(t *testing.T) {
 	f.Close()
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	// Test bw.buf.Flush() error path by filling inner bufio.
 	sb.Write(make([]byte, bufferSize-1))
@@ -693,10 +675,10 @@ func TestBatchWriterFlushBufErrors(t *testing.T) {
 	f2, _ := os.CreateTemp("", "batchwriter-flushbuf-err2-*.log")
 	defer os.Remove(f2.Name())
 
-	sb2 := &syncBuffer{file: f2, sev: Severity_Info}
+	sb2 := &syncBuffer{file: f2}
 	sb2.Writer = bufio.NewWriterSize(f2, bufferSize)
 	rb2 := newRingBuffer(64)
-	bw2 := newBatchWriter(Severity_Info, rb2, sb2, 8)
+	bw2 := newBatchWriter(rb2, sb2, 8)
 
 	bw2.buf.Write([]byte("hello\n"))
 	// bw2.buf.Flush() will succeed, then sb2.Flush() will fail because f2 is closed.
@@ -714,10 +696,10 @@ func TestAsyncWriterCloseDrainsPending(t *testing.T) {
 	}
 	defer os.Remove(f.Name())
 
-	sb := &syncBuffer{file: f, sev: Severity_Info}
+	sb := &syncBuffer{file: f}
 	sb.Writer = bufio.NewWriterSize(f, bufferSize)
 	rb := newRingBuffer(64)
-	bw := newBatchWriter(Severity_Info, rb, sb, 8)
+	bw := newBatchWriter(rb, sb, 8)
 
 	aw := newAsyncWriter(bw, 8)
 
@@ -726,7 +708,6 @@ func TestAsyncWriterCloseDrainsPending(t *testing.T) {
 		b := entryBufPool.Get().(*[]byte)
 		*b = append((*b)[:0], []byte("drain test\n")...)
 		entry.data = *b
-		entry.refCnt.Store(1)
 		rb.tryPush(entry)
 	}
 

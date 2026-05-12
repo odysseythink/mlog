@@ -18,7 +18,6 @@ type syncBuffer struct {
 	*bufio.Writer
 	file   *os.File
 	names  []string
-	sev    Severity
 	nbytes uint64 // The number of bytes written to this file
 	madeAt time.Time
 }
@@ -51,7 +50,7 @@ func (sb *syncBuffer) filenames() []string {
 func (sb *syncBuffer) rotateFile(now time.Time) error {
 	var err error
 	pn := "<none>"
-	file, name, err := create(sb.sev.String(), now, "")
+	file, name, err := create(now, "")
 	sb.madeAt = now
 
 	if sb.file != nil {

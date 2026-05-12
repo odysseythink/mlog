@@ -91,7 +91,7 @@ func TestStderrSinkEnabled(t *testing.T) {
 
 func TestLogNameContainsPid(t *testing.T) {
 	now := time.Now()
-	name, _ := logName("INFO", now)
+	name, _ := logName(now)
 	wantSuffix := fmt.Sprintf(".%09d.%d.log", now.Nanosecond(), pid)
 	if !strings.HasSuffix(name, wantSuffix) {
 		t.Errorf("logName suffix = %q, want suffix %q", name, wantSuffix)
@@ -124,23 +124,21 @@ func TestSyncBufferFilenames(t *testing.T) {
 
 func TestAcquireEntry(t *testing.T) {
 	meta := &LogsinkMeta{Severity: Severity_Info}
-	entry := acquireEntry([]byte("hello"), meta, 1)
+	entry := acquireEntry([]byte("hello"), meta)
 	if string(entry.data) != "hello" {
 		t.Errorf("entry.data = %q, want %q", entry.data, "hello")
 	}
 	if entry.meta != meta {
 		t.Error("entry.meta mismatch")
 	}
-	if entry.refCnt.Load() != 1 {
-		t.Errorf("entry.refCnt = %d, want 1", entry.refCnt.Load())
-	}
+
 	if entry.ack != nil {
 		t.Error("expected nil ack for INFO severity")
 	}
 
 	// Error severity should have ack channel
 	metaErr := &LogsinkMeta{Severity: Severity_Error}
-	entryErr := acquireEntry([]byte("error"), metaErr, 1)
+	entryErr := acquireEntry([]byte("error"), metaErr)
 	if entryErr.ack == nil {
 		t.Error("expected non-nil ack for ERROR severity")
 	}
@@ -153,16 +151,9 @@ func TestNamesErrNoLog(t *testing.T) {
 	defer func() { sinks.file = orig }()
 
 	// Before any log files are created, Names should return ErrNoLog.
-	_, err := Names("INFO")
+	_, err := Names()
 	if !errors.Is(err, ErrNoLog) {
 		t.Errorf("Names(\"INFO\") error = %v, want ErrNoLog", err)
-	}
-}
-
-func TestNamesInvalidSeverity(t *testing.T) {
-	_, err := Names("INVALID")
-	if err == nil {
-		t.Error("Names(\"INVALID\") expected error")
 	}
 }
 

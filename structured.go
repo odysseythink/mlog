@@ -232,52 +232,45 @@ func structuredEmit(entry *Entry, sev Severity) {
 
 	// Lazy-init writers and files on first use (same pattern as fileSinkSet.Emit)
 	fss.mu.Lock()
-	for s := Severity_Debug; s <= fileSev; s++ {
-		if fss.writers[s] == nil {
-			fs := &fileSink{}
-			sb := &syncBuffer{sink: fs, sev: s}
-			if err := sb.rotateFile(timeNow()); err != nil {
-				fss.mu.Unlock()
-				putEntry(entry)
-				return
-			}
-			fs.file = sb
-			fss.sinks[s] = fs
-			bw := newBatchWriter(s, fss.rings[s], sb, *batchSizeFlag)
-			fss.writers[s] = newAsyncWriter(bw, *batchSizeFlag)
+	if fss.writer == nil {
+		fs := &fileSink{}
+		sb := &syncBuffer{sink: fs}
+		if err := sb.rotateFile(timeNow()); err != nil {
+			fss.mu.Unlock()
+			putEntry(entry)
+			return
 		}
+		fs.file = sb
+		fss.sink = fs
+		bw := newBatchWriter(fss.ring, sb, *batchSizeFlag)
+		fss.writer = newAsyncWriter(bw, *batchSizeFlag)
 	}
 	fss.mu.Unlock()
 
 	// Acquire a pooled logEntry and set refCount = number of rings it will be pushed to
-	numRings := int(fileSev) + 1
 	le := logEntryPool.Get().(*logEntry)
 	le.data = nil
 	le.entry = entry
 	le.meta = nil
 	le.ack = nil
-	le.refCnt.Store(int32(numRings))
 
 	if sev >= Severity_Error {
 		le.ack = make(chan struct{})
 	}
 
 	dropped := false
-	for s := Severity_Debug; s <= fileSev; s++ {
-		if !fss.rings[s].tryPush(le) {
-			dropped = true
-			fss.rings[s].dropped.Add(1)
-			if le.refCnt.Add(-1) == 0 {
-				putEntry(le.entry)
-				le.entry = nil
-				le.data = nil
-				le.meta = nil
-				le.ack = nil
-				logEntryPool.Put(le)
-			}
-		} else {
-			fss.writers[s].wake()
-		}
+	if !fss.ring.tryPush(le) {
+		dropped = true
+		fss.ring.dropped.Add(1)
+
+		putEntry(le.entry)
+		le.entry = nil
+		le.data = nil
+		le.meta = nil
+		le.ack = nil
+		logEntryPool.Put(le)
+	} else {
+		fss.writer.wake()
 	}
 
 	if dropped {

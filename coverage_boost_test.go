@@ -238,7 +238,7 @@ func TestNamesNoSink(t *testing.T) {
 	sinks.file = fileSinkSet{}
 	defer func() { sinks.file = orig }()
 
-	_, err := Names("INFO")
+	_, err := Names()
 	if err != ErrNoLog {
 		t.Errorf("expected ErrNoLog, got %v", err)
 	}
@@ -284,19 +284,15 @@ func TestDoNotUseRacyFatalMessageNil(t *testing.T) {
 // TestFatalShutdown covers FatalShutdown.
 func TestFatalShutdown(t *testing.T) {
 	fss := &fileSinkSet{}
-	for i := 0; i < numSeverity; i++ {
-		fss.rings[i] = newRingBuffer(64)
-	}
+	fss.ring = newRingBuffer(64)
 
-	for s := Severity_Debug; s <= Severity_Error; s++ {
-		tf, _ := os.CreateTemp("", "fatal-shutdown-*.log")
-		defer os.Remove(tf.Name())
-		sb := &syncBuffer{file: tf, sev: s}
-		sb.Writer = bufio.NewWriterSize(tf, bufferSize)
-		bw := newBatchWriter(s, fss.rings[s], sb, 8)
-		fss.writers[s] = newAsyncWriter(bw, 8)
-		fss.sinks[s] = &fileSink{file: sb}
-	}
+	tf, _ := os.CreateTemp("", "fatal-shutdown-*.log")
+	defer os.Remove(tf.Name())
+	sb := &syncBuffer{file: tf}
+	sb.Writer = bufio.NewWriterSize(tf, bufferSize)
+	bw := newBatchWriter(fss.ring, sb, 8)
+	fss.writer = newAsyncWriter(bw, 8)
+	fss.sink = &fileSink{file: sb}
 
 	orig := sinks.file
 	sinks.file = *fss
@@ -306,10 +302,7 @@ func TestFatalShutdown(t *testing.T) {
 
 	// Verify files were written.
 	for s := Severity_Debug; s <= Severity_Error; s++ {
-		if fss.sinks[s] == nil {
-			continue
-		}
-		sb, ok := fss.sinks[s].file.(*syncBuffer)
+		sb, ok := fss.sink.file.(*syncBuffer)
 		if !ok || sb.file == nil {
 			continue
 		}
@@ -421,8 +414,6 @@ func TestStructuredLogInvalidSeverity(t *testing.T) {
 	l.Info("info msg")
 }
 
-
-
 // TestSyncBufferWriteRotateError covers syncBuffer.Write rotateFile error.
 func TestSyncBufferWriteRotateError(t *testing.T) {
 	// Ensure onceLogDirs has fired so createLogDirs doesn't overwrite logDirs.
@@ -435,18 +426,18 @@ func TestSyncBufferWriteRotateError(t *testing.T) {
 
 	tf, _ := os.CreateTemp("", "mlog-test-*.log")
 	defer os.Remove(tf.Name())
-	sb := &syncBuffer{file: tf, sev: Severity_Info, nbytes: MaxSize - 1}
+	sb := &syncBuffer{file: tf, nbytes: MaxSize - 1}
 	sb.Writer = bufio.NewWriterSize(tf, bufferSize)
 
-	_, err := sb.Write([]byte("x"))
-	if err == nil {
+	nbyte, _ := sb.Write([]byte("x"))
+	if nbyte != 0 {
 		t.Error("expected error from rotateFile failure")
 	}
 }
 
 // TestCreateError covers create with invalid dir.
 func TestCreateError(t *testing.T) {
-	_, _, err := create("INFO", timeNow(), "/dev/null/invalid_path")
+	_, _, err := create(timeNow(), "/dev/null/invalid_path")
 	if err == nil {
 		t.Error("expected error for invalid dir")
 	}
@@ -461,7 +452,7 @@ func TestCreateNoLogDirs(t *testing.T) {
 	// Ensure onceLogDirs has fired so createLogDirs doesn't run.
 	onceLogDirs.Do(func() {})
 
-	_, _, err := create("INFO", timeNow(), "")
+	_, _, err := create(timeNow(), "")
 	if err == nil {
 		t.Error("expected error for empty logDirs")
 	}
@@ -484,9 +475,7 @@ func TestLoggerLogInvalidSeverityBoost(t *testing.T) {
 // TestFileSinkSetEmitFatalRotateError covers Emit with Fatal severity when rotateFile fails.
 func TestFileSinkSetEmitFatalRotateError(t *testing.T) {
 	fss := &fileSinkSet{}
-	for i := 0; i < numSeverity; i++ {
-		fss.rings[i] = newRingBuffer(64)
-	}
+	fss.ring = newRingBuffer(64)
 
 	// Override logDirs so rotateFile fails during lazy-init.
 	origLogDirs := logDirs
