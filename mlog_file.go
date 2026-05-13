@@ -17,6 +17,7 @@ import (
 
 // logDirs lists the candidate directories for new log files.
 var logDirs []string
+var onceLogDirs sync.Once
 
 var (
 	// If non-empty, overrides the choice of directory in which to write logs.
@@ -27,11 +28,14 @@ var (
 		" (-1 means don't buffer; 0 means buffer INFO only; ...). Has limited applicability on non-prod platforms.")
 )
 
-func SetLogDir(path string) {
+func SetLogDir(path string, flags ...bool) {
 	*logDir = path
 	// Reset so create() will re-evaluate logDirs on next use.
 	logDirs = nil
-	onceLogDirs = sync.Once{}
+	toStderr = false
+	if len(flags) > 0 {
+		alsoToStderr = flags[0]
+	}
 }
 
 func SetLogLevel[T int | int16 | int32 | int64 | uint | uint16 | uint32 | uint64](level T) {
@@ -143,8 +147,6 @@ func logName(t time.Time) (name, link string) {
 
 	return name, program + ".log"
 }
-
-var onceLogDirs sync.Once
 
 // create creates a new log file and returns the file and its filename, which
 // contains t.  If the file is created successfully, create also attempts to

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/odysseythink/mlog"
@@ -10,10 +9,7 @@ import (
 
 func main() {
 	defer mlog.Flush()
-
-	logDir := "/tmp/mlog_demo"
-	os.MkdirAll(logDir, 0755)
-	mlog.SetLogDir(logDir)
+	mlog.SetLogDir("logs", true)
 
 	fmt.Println("=== 当前模式日志输出 ===")
 	fmt.Println()
@@ -36,5 +32,5 @@ func main() {
 	logger.Info("用户登录", mlog.String("user_id", "abc123"))
 
 	fmt.Println()
-	fmt.Println("日志文件位置:", logDir)
+	fmt.Println("日志文件位置: logs")
 }
