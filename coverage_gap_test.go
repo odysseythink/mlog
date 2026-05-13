@@ -495,7 +495,7 @@ func TestCtxlogfNoCaller(t *testing.T) {
 	defer func() { TextSinks = origTextSinks }()
 
 	// Call with very high depth so runtime.Caller fails.
-	logf(1000, Severity_Info, false, noStack, "hello")
+	ctxlogf(nil, 1000, Severity_Info, false, noStack, "hello")
 }
 
 // TestVModuleFlagNilString covers vModuleFlag.String with nil verboseFlags.

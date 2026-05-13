@@ -158,6 +158,65 @@ func metaPoolGet() (any, *LogsinkMeta) {
 	return meta, meta
 }
 
+// mlogPkgPath is the import path of the mlog package, determined at init time.
+// It is used to identify and skip internal mlog frames when resolving caller info.
+var mlogPkgPath string
+
+func init() {
+	pc := reflect.ValueOf(Info).Pointer()
+	fn := runtime.FuncForPC(pc)
+	if fn != nil {
+		name := fn.Name()
+		if slashIdx := strings.LastIndex(name, "/"); slashIdx >= 0 {
+			rest := name[slashIdx+1:]
+			if dotIdx := strings.Index(rest, "."); dotIdx >= 0 {
+				mlogPkgPath = name[:slashIdx+1+dotIdx]
+			}
+		}
+	}
+}
+
+// isMlogInternal reports whether the given function name belongs to the mlog package.
+func isMlogInternal(funcname string) bool {
+	if mlogPkgPath == "" {
+		return false
+	}
+	return strings.HasPrefix(funcname, mlogPkgPath+".") || strings.HasPrefix(funcname, mlogPkgPath+"/")
+}
+
+// getExternalCaller returns the first caller frame outside of the mlog package,
+// then skips an additional 'skip' frames. It is used to reliably resolve the
+// actual caller of public API functions regardless of compiler inlining.
+func getExternalCaller(skip int) (pc uintptr, file string, line int, funcname string) {
+	const maxFrames = 16
+	var pcs [maxFrames]uintptr
+	// Skip getExternalCaller itself and its caller.
+	n := runtime.Callers(2, pcs[:])
+	if n == 0 {
+		return 0, "???", 0, "???"
+	}
+	frames := runtime.CallersFrames(pcs[:n])
+	foundExternal := false
+	for {
+		fr, more := frames.Next()
+		if !more {
+			break
+		}
+		if !foundExternal {
+			if isMlogInternal(fr.Function) {
+				continue
+			}
+			foundExternal = true
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		return fr.PC, trimSrcPath(fr.File), fr.Line, trimFuncName(fr.Function)
+	}
+	return 0, "???", 0, "???"
+}
+
 func appendBacktrace(depth int, format string, args []any) (string, []any) {
 	// Capture a backtrace as a Stack (both text and PC slice).
 	// Structured log sinks can extract the backtrace in whichever format they
@@ -180,34 +239,16 @@ func appendBacktrace(depth int, format string, args []any) (string, []any) {
 	return format, args
 }
 
-// logf acts as ctxlogf, but doesn't expect a context.
-func logf(depth int, severity Severity, verbose bool, stack stack, format string, args ...any) {
-	ctxlogf(nil, depth+1, severity, verbose, stack, format, args...)
-}
-
 // ctxlogf writes a log message for a log function call (or log function wrapper)
 // at the given depth in the current goroutine's stack.
 func ctxlogf(ctx context.Context, depth int, severity Severity, verbose bool, stack stack, format string, args ...any) {
 	funcname := ""
 	now := timeNow()
-	pc, file, line, ok := runtime.Caller(depth + 1)
-	if !ok {
+	pc, file, line, funcname := getExternalCaller(depth)
+	if pc == 0 {
 		file = "???"
 		line = 1
 		funcname = "???"
-	} else {
-		slash := strings.LastIndex(file, "/")
-		if slash >= 0 {
-			file = file[slash+1:]
-		}
-		funcname = runtime.FuncForPC(pc).Name()
-		tmplist := strings.Split(funcname, "/")
-		if strings.Contains(tmplist[len(tmplist)-1], ".") {
-			tmplist = strings.Split(tmplist[len(tmplist)-1], ".")
-			funcname = tmplist[len(tmplist)-1]
-		} else {
-			funcname = tmplist[len(tmplist)-1]
-		}
 	}
 
 	if stack == withStack || backtraceAt(file, line) {
@@ -265,7 +306,7 @@ func infoLnStructured(depth int, severity Severity, args ...any) {
 
 func infoContextStructured(depth int, severity Severity, ctx context.Context, args ...any) {
 	if len(args) == 0 {
-		ctxlogStructured(ctx, depth+1, severity, "", nil)
+		ctxlogStructured(ctx, depth, severity, "", nil)
 		return
 	}
 	msg, ok := args[0].(string)
@@ -278,23 +319,24 @@ func infoContextStructured(depth int, severity Severity, ctx context.Context, ar
 			fields = append(fields, f)
 		}
 	}
-	ctxlogStructured(ctx, depth+1, severity, msg, fields)
+	ctxlogStructured(ctx, depth, severity, msg, fields)
 }
 
 func ctxlogStructured(ctx context.Context, depth int, severity Severity, msg string, fields []Field) {
-	pcs := [1]uintptr{}
-	if runtime.Callers(depth+1, pcs[:]) < 1 {
-		return
+	pc, file, line, funcname := getExternalCaller(depth)
+	if pc == 0 {
+		file = "???"
+		line = 1
+		funcname = "???"
 	}
-	frame, _ := runtime.CallersFrames(pcs[:]).Next()
 
 	entry := getEntry()
 	entry.Severity = severity
 	entry.Time = timeNow().UnixNano()
 	entry.Message = msg
-	entry.File = frame.File
-	entry.Line = frame.Line
-	entry.Funcname = frame.Function
+	entry.File = file
+	entry.Line = line
+	entry.Funcname = funcname
 	entry.Thread = int64(pid)
 
 	if len(fields) > 0 {
@@ -497,10 +539,10 @@ func VDepth(depth int, level Level) Verbose {
 func (v Verbose) Info(args ...any) {
 	if getMode() == LogModeStructured {
 		if v {
-			infoStructured(1, Severity_Info, args...)
+			infoStructured(0, Severity_Info, args...)
 		}
 	} else {
-		v.InfoDepth(1, args...)
+		v.InfoDepth(0, args...)
 	}
 }
 
@@ -511,9 +553,9 @@ func (v Verbose) InfoDepth(depth int, args ...any) {
 		return
 	}
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Info, args...)
+		infoStructured(depth, Severity_Info, args...)
 	} else {
-		logf(depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
+		ctxlogf(nil, depth, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -524,9 +566,9 @@ func (v Verbose) InfoDepthf(depth int, format string, args ...any) {
 		return
 	}
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Info, format, args...)
+		infofStructured(depth, Severity_Info, format, args...)
 	} else {
-		logf(depth+1, Severity_Info, true, noStack, format, args...)
+		ctxlogf(nil, depth, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -537,9 +579,9 @@ func (v Verbose) Infoln(args ...any) {
 		return
 	}
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Info, args...)
+		infoLnStructured(0, Severity_Info, args...)
 	} else {
-		logf(1, Severity_Info, true, noStack, lnFormat(args), args...)
+		ctxlogf(nil, 0, Severity_Info, true, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -547,7 +589,7 @@ func (v Verbose) Infoln(args ...any) {
 // See the documentation of V for usage.
 func (v Verbose) Infof(format string, args ...any) {
 	if v {
-		logf(1, Severity_Info, true, noStack, format, args...)
+		ctxlogf(nil, 0, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -558,9 +600,9 @@ func (v Verbose) InfoContext(ctx context.Context, args ...any) {
 		return
 	}
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Info, ctx, args...)
+		infoContextStructured(0, Severity_Info, ctx, args...)
 	} else {
-		v.InfoContextDepth(ctx, 1, args...)
+		v.InfoContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -572,9 +614,9 @@ func (v Verbose) InfoContextf(ctx context.Context, format string, args ...any) {
 	}
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Info, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Info, msg, nil)
 	} else {
-		ctxlogf(ctx, 1, Severity_Info, true, noStack, format, args...)
+		ctxlogf(ctx, 0, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -585,9 +627,9 @@ func (v Verbose) InfoContextDepth(ctx context.Context, depth int, args ...any) {
 		return
 	}
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Info, ctx, args...)
+		infoContextStructured(depth, Severity_Info, ctx, args...)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth, Severity_Info, true, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -599,9 +641,9 @@ func (v Verbose) InfoContextDepthf(ctx context.Context, depth int, format string
 	}
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Info, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Info, msg, nil)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Info, true, noStack, format, args...)
+		ctxlogf(ctx, depth, Severity_Info, true, noStack, format, args...)
 	}
 }
 
@@ -609,9 +651,9 @@ func (v Verbose) InfoContextDepthf(ctx context.Context, depth int, format string
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Debug(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Debug, args...)
+		infoStructured(0, Severity_Debug, args...)
 	} else {
-		DebugDepth(1, args...)
+		DebugDepth(0, args...)
 	}
 }
 
@@ -622,18 +664,18 @@ func Debug(args ...any) {
 // and the final frame is treated like the original callee to Debug.
 func DebugDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Debug, args...)
+		infoStructured(depth, Severity_Debug, args...)
 	} else {
-		logf(depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+		ctxlogf(nil, depth, Severity_Debug, false, noStack, defaultFormat(args), args...)
 	}
 }
 
 // DebugDepthf acts as DebugDepth but with format string.
 func DebugDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Debug, format, args...)
+		infofStructured(depth, Severity_Debug, format, args...)
 	} else {
-		logf(depth+1, Severity_Debug, false, noStack, format, args...)
+		ctxlogf(nil, depth, Severity_Debug, false, noStack, format, args...)
 	}
 }
 
@@ -641,9 +683,9 @@ func DebugDepthf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Debugln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Debug, args...)
+		infoLnStructured(0, Severity_Debug, args...)
 	} else {
-		logf(1, Severity_Debug, false, noStack, lnFormat(args), args...)
+		ctxlogf(nil, 0, Severity_Debug, false, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -651,9 +693,9 @@ func Debugln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Debugf(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Debug, format, args...)
+		infofStructured(0, Severity_Debug, format, args...)
 	} else {
-		logf(1, Severity_Debug, false, noStack, format, args...)
+		ctxlogf(nil, 0, Severity_Debug, false, noStack, format, args...)
 	}
 }
 
@@ -661,9 +703,9 @@ func Debugf(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func DebugContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Debug, ctx, args...)
+		infoContextStructured(0, Severity_Debug, ctx, args...)
 	} else {
-		DebugContextDepth(ctx, 1, args...)
+		DebugContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -672,9 +714,9 @@ func DebugContext(ctx context.Context, args ...any) {
 func DebugContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Debug, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Debug, msg, nil)
 	} else {
-		ctxlogf(ctx, 1, Severity_Debug, false, noStack, format, args...)
+		ctxlogf(ctx, 0, Severity_Debug, false, noStack, format, args...)
 	}
 }
 
@@ -682,9 +724,9 @@ func DebugContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func DebugContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Debug, ctx, args...)
+		infoContextStructured(depth, Severity_Debug, ctx, args...)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth, Severity_Debug, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -693,9 +735,9 @@ func DebugContextDepth(ctx context.Context, depth int, args ...any) {
 func DebugContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Debug, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Debug, msg, nil)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Debug, false, noStack, format, args...)
+		ctxlogf(ctx, depth, Severity_Debug, false, noStack, format, args...)
 	}
 }
 
@@ -703,9 +745,9 @@ func DebugContextDepthf(ctx context.Context, depth int, format string, args ...a
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Info(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Info, args...)
+		infoStructured(0, Severity_Info, args...)
 	} else {
-		InfoDepth(1, args...)
+		InfoDepth(0, args...)
 	}
 }
 
@@ -716,18 +758,18 @@ func Info(args ...any) {
 // and the final frame is treated like the original callee to Info.
 func InfoDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Info, args...)
+		infoStructured(depth, Severity_Info, args...)
 	} else {
-		logf(depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+		ctxlogf(nil, depth, Severity_Info, false, noStack, defaultFormat(args), args...)
 	}
 }
 
 // InfoDepthf acts as InfoDepth but with format string.
 func InfoDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Info, format, args...)
+		infofStructured(depth, Severity_Info, format, args...)
 	} else {
-		logf(depth+1, Severity_Info, false, noStack, format, args...)
+		ctxlogf(nil, depth, Severity_Info, false, noStack, format, args...)
 	}
 }
 
@@ -735,9 +777,9 @@ func InfoDepthf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Infoln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Info, args...)
+		infoLnStructured(0, Severity_Info, args...)
 	} else {
-		logf(1, Severity_Info, false, noStack, lnFormat(args), args...)
+		ctxlogf(nil, 0, Severity_Info, false, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -745,9 +787,9 @@ func Infoln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Infof(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Info, format, args...)
+		infofStructured(0, Severity_Info, format, args...)
 	} else {
-		logf(1, Severity_Info, false, noStack, format, args...)
+		ctxlogf(nil, 0, Severity_Info, false, noStack, format, args...)
 	}
 }
 
@@ -755,9 +797,9 @@ func Infof(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func InfoContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Info, ctx, args...)
+		infoContextStructured(0, Severity_Info, ctx, args...)
 	} else {
-		InfoContextDepth(ctx, 1, args...)
+		InfoContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -766,9 +808,9 @@ func InfoContext(ctx context.Context, args ...any) {
 func InfoContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Info, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Info, msg, nil)
 	} else {
-		ctxlogf(ctx, 1, Severity_Info, false, noStack, format, args...)
+		ctxlogf(ctx, 0, Severity_Info, false, noStack, format, args...)
 	}
 }
 
@@ -776,9 +818,9 @@ func InfoContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func InfoContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Info, ctx, args...)
+		infoContextStructured(depth, Severity_Info, ctx, args...)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Info, false, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth, Severity_Info, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -787,9 +829,9 @@ func InfoContextDepth(ctx context.Context, depth int, args ...any) {
 func InfoContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Info, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Info, msg, nil)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Info, false, noStack, format, args...)
+		ctxlogf(ctx, depth, Severity_Info, false, noStack, format, args...)
 	}
 }
 
@@ -797,9 +839,9 @@ func InfoContextDepthf(ctx context.Context, depth int, format string, args ...an
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Warning(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Warning, args...)
+		infoStructured(0, Severity_Warning, args...)
 	} else {
-		WarningDepth(1, args...)
+		WarningDepth(0, args...)
 	}
 }
 
@@ -807,9 +849,9 @@ func Warning(args ...any) {
 // WarningDepth(0, "msg") is the same as Warning("msg").
 func WarningDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Warning, args...)
+		infoStructured(depth, Severity_Warning, args...)
 	} else {
-		logf(depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+		ctxlogf(nil, depth, Severity_Warning, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -817,9 +859,9 @@ func WarningDepth(depth int, args ...any) {
 // WarningDepthf(0, "msg") is the same as Warningf("msg").
 func WarningDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Warning, format, args...)
+		infofStructured(depth, Severity_Warning, format, args...)
 	} else {
-		logf(depth+1, Severity_Warning, false, noStack, format, args...)
+		ctxlogf(nil, depth, Severity_Warning, false, noStack, format, args...)
 	}
 }
 
@@ -827,9 +869,9 @@ func WarningDepthf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Warningln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Warning, args...)
+		infoLnStructured(0, Severity_Warning, args...)
 	} else {
-		logf(1, Severity_Warning, false, noStack, lnFormat(args), args...)
+		ctxlogf(nil, 0, Severity_Warning, false, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -837,9 +879,9 @@ func Warningln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Warningf(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Warning, format, args...)
+		infofStructured(0, Severity_Warning, format, args...)
 	} else {
-		logf(1, Severity_Warning, false, noStack, format, args...)
+		ctxlogf(nil, 0, Severity_Warning, false, noStack, format, args...)
 	}
 }
 
@@ -847,9 +889,9 @@ func Warningf(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func WarningContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Warning, ctx, args...)
+		infoContextStructured(0, Severity_Warning, ctx, args...)
 	} else {
-		WarningContextDepth(ctx, 1, args...)
+		WarningContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -858,9 +900,9 @@ func WarningContext(ctx context.Context, args ...any) {
 func WarningContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Warning, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Warning, msg, nil)
 	} else {
-		ctxlogf(ctx, 1, Severity_Warning, false, noStack, format, args...)
+		ctxlogf(ctx, 0, Severity_Warning, false, noStack, format, args...)
 	}
 }
 
@@ -868,9 +910,9 @@ func WarningContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func WarningContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Warning, ctx, args...)
+		infoContextStructured(depth, Severity_Warning, ctx, args...)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth, Severity_Warning, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -879,9 +921,9 @@ func WarningContextDepth(ctx context.Context, depth int, args ...any) {
 func WarningContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Warning, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Warning, msg, nil)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Warning, false, noStack, format, args...)
+		ctxlogf(ctx, depth, Severity_Warning, false, noStack, format, args...)
 	}
 }
 
@@ -889,9 +931,9 @@ func WarningContextDepthf(ctx context.Context, depth int, format string, args ..
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Error(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Error, args...)
+		infoStructured(0, Severity_Error, args...)
 	} else {
-		ErrorDepth(1, args...)
+		ErrorDepth(0, args...)
 	}
 }
 
@@ -899,9 +941,9 @@ func Error(args ...any) {
 // ErrorDepth(0, "msg") is the same as Error("msg").
 func ErrorDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Error, args...)
+		infoStructured(depth, Severity_Error, args...)
 	} else {
-		logf(depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+		ctxlogf(nil, depth, Severity_Error, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -909,9 +951,9 @@ func ErrorDepth(depth int, args ...any) {
 // ErrorDepthf(0, "msg") is the same as Errorf("msg").
 func ErrorDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Error, format, args...)
+		infofStructured(depth, Severity_Error, format, args...)
 	} else {
-		logf(depth+1, Severity_Error, false, noStack, format, args...)
+		ctxlogf(nil, depth, Severity_Error, false, noStack, format, args...)
 	}
 }
 
@@ -919,9 +961,9 @@ func ErrorDepthf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Errorln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Error, args...)
+		infoLnStructured(0, Severity_Error, args...)
 	} else {
-		logf(1, Severity_Error, false, noStack, lnFormat(args), args...)
+		ctxlogf(nil, 0, Severity_Error, false, noStack, lnFormat(args), args...)
 	}
 }
 
@@ -929,9 +971,9 @@ func Errorln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Errorf(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Error, format, args...)
+		infofStructured(0, Severity_Error, format, args...)
 	} else {
-		logf(1, Severity_Error, false, noStack, format, args...)
+		ctxlogf(nil, 0, Severity_Error, false, noStack, format, args...)
 	}
 }
 
@@ -939,9 +981,9 @@ func Errorf(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func ErrorContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Error, ctx, args...)
+		infoContextStructured(0, Severity_Error, ctx, args...)
 	} else {
-		ErrorContextDepth(ctx, 1, args...)
+		ErrorContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -950,9 +992,9 @@ func ErrorContext(ctx context.Context, args ...any) {
 func ErrorContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Error, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Error, msg, nil)
 	} else {
-		ctxlogf(ctx, 1, Severity_Error, false, noStack, format, args...)
+		ctxlogf(ctx, 0, Severity_Error, false, noStack, format, args...)
 	}
 }
 
@@ -960,9 +1002,9 @@ func ErrorContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func ErrorContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Error, ctx, args...)
+		infoContextStructured(depth, Severity_Error, ctx, args...)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Error, false, noStack, defaultFormat(args), args...)
+		ctxlogf(ctx, depth, Severity_Error, false, noStack, defaultFormat(args), args...)
 	}
 }
 
@@ -971,14 +1013,14 @@ func ErrorContextDepth(ctx context.Context, depth int, args ...any) {
 func ErrorContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Error, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Error, msg, nil)
 	} else {
-		ctxlogf(ctx, depth+1, Severity_Error, false, noStack, format, args...)
+		ctxlogf(ctx, depth, Severity_Error, false, noStack, format, args...)
 	}
 }
 
 func ctxfatalf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Fatal, false, withStack, format, args...)
+	ctxlogf(ctx, depth, Severity_Fatal, false, withStack, format, args...)
 	flushAndAbort()
 }
 
@@ -995,7 +1037,7 @@ func flushAndAbort() {
 }
 
 func fatalf(depth int, format string, args ...any) {
-	ctxfatalf(nil, depth+1, format, args...)
+	ctxfatalf(nil, depth, format, args...)
 }
 
 // Fatal logs to the FATAL, ERROR, WARNING, and INFO logs,
@@ -1003,10 +1045,10 @@ func fatalf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Fatal(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Fatal, args...)
+		infoStructured(0, Severity_Fatal, args...)
 		flushAndAbort()
 	} else {
-		FatalDepth(1, args...)
+		FatalDepth(0, args...)
 	}
 }
 
@@ -1014,10 +1056,10 @@ func Fatal(args ...any) {
 // FatalDepth(0, "msg") is the same as Fatal("msg").
 func FatalDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Fatal, args...)
+		infoStructured(depth, Severity_Fatal, args...)
 		flushAndAbort()
 	} else {
-		fatalf(depth+1, defaultFormat(args), args...)
+		fatalf(depth, defaultFormat(args), args...)
 	}
 }
 
@@ -1025,10 +1067,10 @@ func FatalDepth(depth int, args ...any) {
 // FatalDepthf(0, "msg") is the same as Fatalf("msg").
 func FatalDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Fatal, format, args...)
+		infofStructured(depth, Severity_Fatal, format, args...)
 		flushAndAbort()
 	} else {
-		fatalf(depth+1, format, args...)
+		fatalf(depth, format, args...)
 	}
 }
 
@@ -1037,10 +1079,10 @@ func FatalDepthf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Println; a newline is appended if missing.
 func Fatalln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Fatal, args...)
+		infoLnStructured(0, Severity_Fatal, args...)
 		flushAndAbort()
 	} else {
-		fatalf(1, lnFormat(args), args...)
+		fatalf(0, lnFormat(args), args...)
 	}
 }
 
@@ -1049,10 +1091,10 @@ func Fatalln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Fatalf(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Fatal, format, args...)
+		infofStructured(0, Severity_Fatal, format, args...)
 		flushAndAbort()
 	} else {
-		fatalf(1, format, args...)
+		fatalf(0, format, args...)
 	}
 }
 
@@ -1060,10 +1102,10 @@ func Fatalf(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func FatalContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Fatal, ctx, args...)
+		infoContextStructured(0, Severity_Fatal, ctx, args...)
 		flushAndAbort()
 	} else {
-		FatalContextDepth(ctx, 1, args...)
+		FatalContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -1072,7 +1114,7 @@ func FatalContext(ctx context.Context, args ...any) {
 func FatalContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Fatal, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Fatal, msg, nil)
 		flushAndAbort()
 	} else {
 		ctxfatalf(ctx, 1, format, args...)
@@ -1083,10 +1125,10 @@ func FatalContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func FatalContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Fatal, ctx, args...)
+		infoContextStructured(depth, Severity_Fatal, ctx, args...)
 		flushAndAbort()
 	} else {
-		ctxfatalf(ctx, depth+1, defaultFormat(args), args...)
+		ctxfatalf(ctx, depth, defaultFormat(args), args...)
 	}
 }
 
@@ -1094,15 +1136,15 @@ func FatalContextDepth(ctx context.Context, depth int, args ...any) {
 func FatalContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Fatal, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Fatal, msg, nil)
 		flushAndAbort()
 	} else {
-		ctxfatalf(ctx, depth+1, format, args...)
+		ctxfatalf(ctx, depth, format, args...)
 	}
 }
 
 func ctxexitf(ctx context.Context, depth int, format string, args ...any) {
-	ctxlogf(ctx, depth+1, Severity_Fatal, false, noStack, format, args...)
+	ctxlogf(ctx, depth, Severity_Fatal, false, noStack, format, args...)
 	Close()
 	os.Exit(1)
 }
@@ -1115,11 +1157,11 @@ func exitf(depth int, format string, args ...any) {
 // Arguments are handled in the manner of fmt.Print; a newline is appended if missing.
 func Exit(args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(1, Severity_Fatal, args...)
+		infoStructured(0, Severity_Fatal, args...)
 		Close()
 		os.Exit(1)
 	} else {
-		ExitDepth(1, args...)
+		ExitDepth(0, args...)
 	}
 }
 
@@ -1127,7 +1169,7 @@ func Exit(args ...any) {
 // ExitDepth(0, "msg") is the same as Exit("msg").
 func ExitDepth(depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoStructured(depth+1, Severity_Fatal, args...)
+		infoStructured(depth, Severity_Fatal, args...)
 		Close()
 		os.Exit(1)
 	} else {
@@ -1139,7 +1181,7 @@ func ExitDepth(depth int, args ...any) {
 // ExitDepthf(0, "msg") is the same as Exitf("msg").
 func ExitDepthf(depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(depth+1, Severity_Fatal, format, args...)
+		infofStructured(depth, Severity_Fatal, format, args...)
 		Close()
 		os.Exit(1)
 	} else {
@@ -1150,7 +1192,7 @@ func ExitDepthf(depth int, format string, args ...any) {
 // Exitln logs to the FATAL, ERROR, WARNING, and INFO logs, then calls os.Exit(1).
 func Exitln(args ...any) {
 	if getMode() == LogModeStructured {
-		infoLnStructured(1, Severity_Fatal, args...)
+		infoLnStructured(0, Severity_Fatal, args...)
 		Close()
 		os.Exit(1)
 	} else {
@@ -1162,7 +1204,7 @@ func Exitln(args ...any) {
 // Arguments are handled in the manner of fmt.Printf; a newline is appended if missing.
 func Exitf(format string, args ...any) {
 	if getMode() == LogModeStructured {
-		infofStructured(1, Severity_Fatal, format, args...)
+		infofStructured(0, Severity_Fatal, format, args...)
 		Close()
 		os.Exit(1)
 	} else {
@@ -1174,11 +1216,11 @@ func Exitf(format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func ExitContext(ctx context.Context, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(1, Severity_Fatal, ctx, args...)
+		infoContextStructured(0, Severity_Fatal, ctx, args...)
 		Close()
 		os.Exit(1)
 	} else {
-		ExitContextDepth(ctx, 1, args...)
+		ExitContextDepth(ctx, 0, args...)
 	}
 }
 
@@ -1187,7 +1229,7 @@ func ExitContext(ctx context.Context, args ...any) {
 func ExitContextf(ctx context.Context, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, 1, Severity_Fatal, msg, nil)
+		ctxlogStructured(ctx, 0, Severity_Fatal, msg, nil)
 		Close()
 		os.Exit(1)
 	} else {
@@ -1199,11 +1241,11 @@ func ExitContextf(ctx context.Context, format string, args ...any) {
 // context is used to pass the Trace Context to log sinks.
 func ExitContextDepth(ctx context.Context, depth int, args ...any) {
 	if getMode() == LogModeStructured {
-		infoContextStructured(depth+1, Severity_Fatal, ctx, args...)
+		infoContextStructured(depth, Severity_Fatal, ctx, args...)
 		Close()
 		os.Exit(1)
 	} else {
-		ctxexitf(ctx, depth+1, defaultFormat(args), args...)
+		ctxexitf(ctx, depth, defaultFormat(args), args...)
 	}
 }
 
@@ -1212,10 +1254,10 @@ func ExitContextDepth(ctx context.Context, depth int, args ...any) {
 func ExitContextDepthf(ctx context.Context, depth int, format string, args ...any) {
 	if getMode() == LogModeStructured {
 		msg := fmt.Sprintf(format, args...)
-		ctxlogStructured(ctx, depth+1, Severity_Fatal, msg, nil)
+		ctxlogStructured(ctx, depth, Severity_Fatal, msg, nil)
 		Close()
 		os.Exit(1)
 	} else {
-		ctxexitf(ctx, depth+1, format, args...)
+		ctxexitf(ctx, depth, format, args...)
 	}
 }

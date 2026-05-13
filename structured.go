@@ -2,7 +2,6 @@ package mlog
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -184,19 +183,20 @@ func (l *Logger) log(sev Severity, msg string, fields []Field) {
 		return
 	}
 
-	pcs := [1]uintptr{}
-	if runtime.Callers(3, pcs[:]) < 1 {
-		return
+	pc, file, line, funcname := getExternalCaller(0)
+	if pc == 0 {
+		file = "???"
+		line = 1
+		funcname = "???"
 	}
-	frame, _ := runtime.CallersFrames(pcs[:]).Next()
 
 	entry := getEntry()
 	entry.Severity = sev
 	entry.Time = timeNow().UnixNano()
 	entry.Message = msg
-	entry.File = frame.File
-	entry.Line = frame.Line
-	entry.Funcname = frame.Function
+	entry.File = file
+	entry.Line = line
+	entry.Funcname = funcname
 	entry.Thread = int64(pid)
 
 	totalFields := len(l.fields) + len(fields)
